@@ -51,7 +51,14 @@ exactly-once and transactional.
 
 ## Status
 
-🚧 Early development — Phase 0 (core engine + property tests). See `PLAN.md`.
+🚧 Early development. **Phase 0 complete**: the backend-free engine is proven
+against an in-memory reference with property-based invariant tests
+(incremental result == full rebuild over random insert/update/delete
+sequences), idempotent replay, crash-safety, and map-versioning tests —
+18 green. **Next: the SQLite adapter** (Phase 1), then Postgres. See `PLAN.md`.
+
+⚠️ Published as TypeScript source (Bun-first) while pre-1.0; a compiled build
+lands with the ergonomics phase.
 
 ## License
 

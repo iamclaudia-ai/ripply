@@ -6,11 +6,14 @@
   "author": "Michael & Claudia",
   "repository": "github:iamclaudia-ai/ripply",
   "type": "module",
+  "sideEffects": false,
+  "files": [
+    "src",
+    "docs"
+  ],
   "exports": {
     ".": "./src/index.ts",
-    "./memory": "./src/memory/index.ts",
-    "./sqlite": "./src/sqlite/index.ts",
-    "./postgres": "./src/postgres/index.ts"
+    "./memory": "./src/memory/index.ts"
   },
   "scripts": {
     "test": "bun test",
