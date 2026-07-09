@@ -4,7 +4,10 @@
   "description": "Real-time incremental map-reduce indexes for SQLite and Postgres — RavenDB-style pre-computed aggregates as a tiny standalone library",
   "license": "MIT",
   "author": "Michael & Claudia",
-  "repository": "github:iamclaudia-ai/ripply",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamclaudia-ai/ripply.git"
+  },
   "type": "module",
   "sideEffects": false,
   "files": [
