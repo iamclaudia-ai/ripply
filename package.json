@@ -1,6 +1,6 @@
 {
   "name": "ripply",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Real-time incremental map-reduce indexes for SQLite and Postgres — RavenDB-style pre-computed aggregates as a tiny standalone library",
   "license": "MIT",
   "author": "Michael & Claudia",

@@ -33,6 +33,36 @@ await ripply.index("countByStatus").all();
 // tally goes down. No rescans.
 ```
 
+**The tally is a real table.** Every index materializes as `ripply_<name>`
+with your groupBy fields and aggregates as plain columns — query it with any
+SQL client, no Ripply required, and declare ordinary SQL indexes on it:
+
+```sql
+SELECT tech, revenue, jobs FROM ripply_revenueByTech ORDER BY revenue DESC;
+```
+
+**And a tally can feed another index.** Cascading rollups (RavenDB 4's
+OutputReduceToCollection), incremental all the way down:
+
+```ts
+ripply.defineIndex("revenueByMonth", {
+  collection: "ripply_revenueByDay", // ← another index's output table
+  map: (day) => ({ month: day.day.slice(0, 7), revenue: day.revenue }),
+  reduce: { groupBy: ["month"], aggregate: { revenue: "sum" } },
+});
+```
+
+## Live demo
+
+```bash
+bun examples/work-orders/server.ts   # → http://localhost:4242
+```
+
+![ripply live dashboard](docs/assets/dashboard.png)
+
+Random inserts/updates/deletes ripple through four indexes (including a
+day→month cascade) in ~2ms per drain, with the changelog auto-pruned to zero.
+
 ## How it works
 
 1. **Capture** — SQLite: generated triggers append to a changelog table.
@@ -51,11 +81,20 @@ exactly-once and transactional.
 
 ## Status
 
-🚧 Early development. **Phase 0 complete**: the backend-free engine is proven
-against an in-memory reference with property-based invariant tests
-(incremental result == full rebuild over random insert/update/delete
-sequences), idempotent replay, crash-safety, and map-versioning tests —
-18 green. **Next: the SQLite adapter** (Phase 1), then Postgres. See `PLAN.md`.
+🚧 Early development, moving fast. **Phases 0 and 1 complete:**
+
+- Backend-free engine proven by property-based invariant tests (incremental
+  result == full rebuild over random op sequences), idempotent replay,
+  crash-safety, and map-versioning tests
+- **SQLite adapter** — generated trigger capture, transactional store,
+  materialized tally tables, cascading indexes; the identical invariant
+  suite runs against both the in-memory reference and real SQLite (41 green)
+- **Verified against RavenDB itself**: a production RavenDB map-reduce index
+  ported to Ripply over 452 live documents produced exactly matching reduce
+  groups (`scripts/ravendb-oracle.ts`)
+
+**Next: Postgres** (trigger-outbox, then opt-in logical-decoding CDC). See
+`PLAN.md`.
 
 ⚠️ Published as TypeScript source (Bun-first) while pre-1.0; a compiled build
 lands with the ergonomics phase.
