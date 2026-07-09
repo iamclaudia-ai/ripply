@@ -16,7 +16,8 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./memory": "./src/memory/index.ts"
+    "./memory": "./src/memory/index.ts",
+    "./sqlite": "./src/sqlite/index.ts"
   },
   "scripts": {
     "test": "bun test",

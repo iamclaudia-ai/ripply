@@ -42,6 +42,12 @@ export interface CreateRipplyOptions extends CreateEngineOptions {
   pollInterval?: number;
   /** Called when a background drain fails. Default: console.error. */
   onError?: (error: unknown) => void;
+  /**
+   * After each drain, ask the Source to delete changelog entries that every
+   * index on a collection has applied (when the Source supports `prune`).
+   * Default true.
+   */
+  autoPrune?: boolean;
 }
 
 /**
@@ -73,6 +79,7 @@ export class Ripply {
   private readonly store: Store;
   private readonly pollInterval: number;
   private readonly onError: (error: unknown) => void;
+  private readonly autoPrune: boolean;
 
   private running = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -90,6 +97,7 @@ export class Ripply {
     this.engine = createEngine(options);
     this.store = options.store;
     this.pollInterval = options.pollInterval ?? 250;
+    this.autoPrune = options.autoPrune ?? true;
     this.onError =
       options.onError ??
       ((error) => console.error('[ripply] background processing failed:', error));
@@ -154,7 +162,11 @@ export class Ripply {
 
   /** Process every index until fully caught up (explicit alternative to wakeups). */
   async drain(): Promise<number> {
-    return this.runExclusive(() => this.engine.drain());
+    return this.runExclusive(async () => {
+      const processed = await this.engine.drain();
+      await this.pruneChangelogs();
+      return processed;
+    });
   }
 
   async rebuild(name: string): Promise<void> {
@@ -184,10 +196,29 @@ export class Ripply {
       if (!this.running) return;
       try {
         await this.engine.drain();
+        await this.pruneChangelogs();
       } catch (error) {
         this.onError(error);
       }
     });
+  }
+
+  /** Delete changes every index on a collection has applied. */
+  private async pruneChangelogs(): Promise<void> {
+    if (!this.autoPrune || !this.engine.source.prune) return;
+    const byCollection = new Map<string, string[]>();
+    for (const name of this.engine.indexNames()) {
+      const collection = this.engine.runtimeOf(name).def.collection;
+      byCollection.set(collection, [...(byCollection.get(collection) ?? []), name]);
+    }
+    for (const [collection, names] of byCollection) {
+      const cursors = await this.store.transaction(async (tx) => {
+        const result = [];
+        for (const name of names) result.push(await tx.getCursor(name));
+        return result;
+      });
+      await this.engine.source.prune(collection, cursors);
+    }
   }
 }
 

@@ -85,6 +85,20 @@ export class MemorySource implements Source {
     return this.nextSeq > 1 ? this.nextSeq - 1 : null;
   }
 
+  async prune(collection: string, cursors: Cursor[]): Promise<number> {
+    this.mustCollection(collection);
+    if (cursors.length === 0 || cursors.some((cursor) => cursor === null)) return 0;
+    const upTo = Math.min(...cursors.map(asSeq));
+    const before = this.changelog.length;
+    for (let i = this.changelog.length - 1; i >= 0; i--) {
+      const record = this.changelog[i]!;
+      if (record.collection === collection && record.seq <= upTo) {
+        this.changelog.splice(i, 1);
+      }
+    }
+    return before - this.changelog.length;
+  }
+
   wakeups(collection: string, onChange: () => void): Unsubscribe {
     const set = this.listeners.get(collection) ?? new Set();
     set.add(onChange);

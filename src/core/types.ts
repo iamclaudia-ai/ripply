@@ -126,6 +126,15 @@ export interface Source {
 
   /** Optional low-latency wakeup (pg_notify, sqlite update_hook…). */
   wakeups?(collection: string, onChange: () => void): Unsubscribe;
+
+  /**
+   * Optional changelog hygiene: given the cursors of every index reading
+   * this collection, delete changes all of them have already applied.
+   * The adapter owns cursor ordering (numeric seq, LSN…); a null cursor
+   * (an index that never processed) must prune nothing. Returns the number
+   * of pruned changes.
+   */
+  prune?(collection: string, cursors: Cursor[]): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
