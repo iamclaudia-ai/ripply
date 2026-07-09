@@ -2,6 +2,8 @@
 
 **Real-time incremental map-reduce indexes for SQLite and Postgres.**
 
+> **Let SQL be SQL — Ripply just keeps the tallies.**
+
 Pre-computed, always-fresh aggregates — counts by status, revenue by month,
 workload by assignee — maintained incrementally as your rows change. Inserts,
 updates, **and deletes**. Query time is a key lookup, never a `GROUP BY` scan.
@@ -80,6 +82,17 @@ Reprocessing is idempotent by construction, so crashes and replays never
 corrupt an index. When source and store share a database, updates are
 exactly-once and transactional.
 
+## Philosophy
+
+Ripply is not a query language, not an ORM, and not a database. It maintains
+the one thing SQL can't do cheaply on its own — always-fresh incremental
+aggregates with delete retraction — materializes the result as an ordinary
+table, and gets out of the way. Filtering, joining, sorting, projecting?
+That's SQL's job, and SQL is great at it: join your tally table to anything.
+
+It's also the one-line answer to *"why not a materialized view?"* —
+`REFRESH MATERIALIZED VIEW` recomputes the world; Ripply ripples. 🌊
+
 ## Status
 
 🚧 Early development, moving fast. **Phases 0, 1, and 2 complete:**
@@ -102,8 +115,9 @@ exactly-once and transactional.
   ported to Ripply over 452 live documents produced exactly matching reduce
   groups (`scripts/ravendb-oracle.ts`)
 
-**Next: ergonomics** (compiled build, drill-down polish) and opt-in
-logical-decoding CDC. See `PLAN.md`.
+**Next: ergonomics** (compiled build, full type inference, drill-down
+polish). Opt-in logical-decoding CDC is designed but deferred until someone
+actually needs it. See `PLAN.md`.
 
 ⚠️ Published as TypeScript source (Bun-first) while pre-1.0; a compiled build
 lands with the ergonomics phase.
