@@ -53,12 +53,21 @@ the real types with full inference.
 
 ## Phase 1 — SQLite adapter
 
-- [ ] `sqliteSource`: trigger codegen from `PRAGMA table_info`, `_ripply_changelog`,
-      consume-and-delete drain, `update_hook` wakeup + poll fallback
-- [ ] `sqliteStore`: entries/reduced/cursors tables, one-tx-per-batch
-- [ ] Re-run all Phase 0 invariants against SQLite (same test suite, adapter
-      matrix)
-- [ ] rebuild()/verify() end-to-end
+- [x] `sqliteSource`: trigger codegen from `PRAGMA table_info`, `_ripply_changelog`,
+      cursor-based poll + `Source.prune` below min cursor (generalized from
+      consume-and-delete: destructive polling breaks multi-index sharing and
+      idempotent replay; prune gives the same hygiene — Ripply auto-prunes
+      after drains). No `update_hook` in bun:sqlite → poll fallback only.
+- [x] `sqliteStore`: entries/reduced/cursors tables, one BEGIN IMMEDIATE tx
+      per batch
+- [x] Re-run all Phase 0 invariants against SQLite (same test suite, adapter
+      matrix — `runInvariantSuite` in `src/core/__tests__/suite.ts`)
+- [x] rebuild()/verify() end-to-end (durability across close/reopen, trigger
+      regen after ALTER TABLE, identifier hardening, auto-prune)
+- [x] **RavenDB oracle** (`scripts/ravendb-oracle.ts`): ported
+      `HotelRoom/TaskCompletionsByTechDate` from a live RavenDB 3.x db,
+      452 real docs → exact group match across 4 hotels. Initial build 19ms,
+      incremental 8ms.
 - [ ] Example app (`examples/work-orders/`)
 
 **Ship it usable after this phase.**
