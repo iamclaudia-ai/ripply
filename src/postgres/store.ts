@@ -310,25 +310,38 @@ class PostgresStoreTx implements StoreTx {
   }
 
   async replaceEntries(index: string, pk: PkValue, entries: StoredEntry[]): Promise<void> {
-    const key = pkKeyOf(pk);
     await this.sql.unsafe(`DELETE FROM _ripply_entries WHERE idx = $1 AND pk = $2`, [
       index,
-      key,
+      pkKeyOf(pk),
     ]);
-    if (entries.length === 0) return;
-    const params: unknown[] = [];
-    const tuples = entries.map((entry) => {
-      const p = params.length;
-      params.push(index, key, entry.ord, entry.groupKey, JSON.stringify(entry.values));
-      // ::text::jsonb — the param is explicitly text and the SERVER parses
-      // it; Bun would otherwise JSON-encode a pre-stringified param twice
-      return `($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}, $${p + 5}::text::jsonb)`;
-    });
-    await this.sql.unsafe(
-      `INSERT INTO _ripply_entries (idx, pk, ord, group_key, vals)
-       VALUES ${tuples.join(', ')}`,
-      params,
-    );
+    await this.insertEntries(index, entries);
+  }
+
+  /** Bulk insert (rebuild fast path — also the tail of replaceEntries). */
+  async insertEntries(index: string, entries: StoredEntry[]): Promise<void> {
+    // chunked multi-row inserts: 5 params per row, well under PG's 65535
+    for (let at = 0; at < entries.length; at += 1000) {
+      const chunk = entries.slice(at, at + 1000);
+      const params: unknown[] = [];
+      const tuples = chunk.map((entry) => {
+        const p = params.length;
+        params.push(
+          index,
+          pkKeyOf(entry.pk),
+          entry.ord,
+          entry.groupKey,
+          JSON.stringify(entry.values),
+        );
+        // ::text::jsonb — the param is explicitly text and the SERVER parses
+        // it; Bun would otherwise JSON-encode a pre-stringified param twice
+        return `($${p + 1}, $${p + 2}, $${p + 3}, $${p + 4}, $${p + 5}::text::jsonb)`;
+      });
+      await this.sql.unsafe(
+        `INSERT INTO _ripply_entries (idx, pk, ord, group_key, vals)
+         VALUES ${tuples.join(', ')}`,
+        params,
+      );
+    }
   }
 
   async readGroupEntries(index: string, groupKey: string): Promise<StoredEntry[]> {
@@ -362,45 +375,43 @@ class PostgresStoreTx implements StoreTx {
   }
 
   async putReduced(index: string, row: ReducedRow): Promise<void> {
-    const info = this.tally(index);
-    const values: unknown[] = [row.groupKey];
-    for (const field of info.groupBy) {
-      values.push(projected(row.group[field], info.types[field]!));
-    }
-    for (const agg of info.aggregates) {
-      const value = row.values[agg.out];
-      if (agg.fn === 'avg') {
-        const components = (value ?? { sum: 0, count: 0 }) as {
-          sum: number;
-          count: number;
-        };
-        values.push(components.count > 0 ? components.sum / components.count : null);
-        values.push(components.sum, components.count);
-      } else {
-        values.push(projected(value, info.types[agg.out]!));
-      }
-    }
-    values.push(row.entryCount, JSON.stringify(row.values));
+    await this.putReducedMany(index, [row]);
+  }
 
-    const columnList = info.columns.map(ident).join(', ');
-    const placeholders = info.columns
-      .map((column, i) => {
-        const type = column === 'vals' ? 'jsonb' : info.types[column];
-        // ::text::jsonb, not ::jsonb — see replaceEntries
-        return type?.toLowerCase().includes('json') ? `$${i + 1}::text::jsonb` : `$${i + 1}`;
-      })
-      .join(', ');
+  /** Bulk upsert (rebuild fast path). Group keys must be distinct. */
+  async putReducedMany(index: string, rows: ReducedRow[]): Promise<void> {
+    const info = this.tally(index);
+    const width = info.columns.length;
+    const rowsPerChunk = Math.max(1, Math.floor(20_000 / width));
     const updates = info.columns
       .filter((column) => column !== 'group_key')
       .map((column) => `${ident(column)} = EXCLUDED.${ident(column)}`)
       .join(', ');
-    // upsert on purpose: fires the capture trigger's INSERT/UPDATE in this
-    // same transaction, which is what makes cascading indexes atomic
-    await this.sql.unsafe(
-      `INSERT INTO ${ident(info.table)} (${columnList}) VALUES (${placeholders})
-       ON CONFLICT (group_key) DO UPDATE SET ${updates}`,
-      values,
-    );
+    const columnList = info.columns.map(ident).join(', ');
+
+    for (let at = 0; at < rows.length; at += rowsPerChunk) {
+      const chunk = rows.slice(at, at + rowsPerChunk);
+      const params: unknown[] = [];
+      const tuples = chunk.map((row) => {
+        const base = params.length;
+        params.push(...projectedValues(info, row));
+        const placeholders = info.columns.map((column, i) => {
+          const type = column === 'vals' ? 'jsonb' : info.types[column];
+          // ::text::jsonb, not ::jsonb — see insertEntries
+          return type?.toLowerCase().includes('json')
+            ? `$${base + i + 1}::text::jsonb`
+            : `$${base + i + 1}`;
+        });
+        return `(${placeholders.join(', ')})`;
+      });
+      // upsert on purpose: fires the capture trigger's INSERT/UPDATE in this
+      // same transaction, which is what makes cascading indexes atomic
+      await this.sql.unsafe(
+        `INSERT INTO ${ident(info.table)} (${columnList}) VALUES ${tuples.join(', ')}
+         ON CONFLICT (group_key) DO UPDATE SET ${updates}`,
+        params,
+      );
+    }
   }
 
   async deleteReduced(index: string, groupKey: string): Promise<void> {
@@ -460,6 +471,29 @@ class PostgresStoreTx implements StoreTx {
       [index, meta.mapVersion],
     );
   }
+}
+
+/** One reduced row projected to its tally-column values, in column order. */
+function projectedValues(info: TallyInfo, row: ReducedRow): unknown[] {
+  const values: unknown[] = [row.groupKey];
+  for (const field of info.groupBy) {
+    values.push(projected(row.group[field], info.types[field]!));
+  }
+  for (const agg of info.aggregates) {
+    const value = row.values[agg.out];
+    if (agg.fn === 'avg') {
+      const components = (value ?? { sum: 0, count: 0 }) as {
+        sum: number;
+        count: number;
+      };
+      values.push(components.count > 0 ? components.sum / components.count : null);
+      values.push(components.sum, components.count);
+    } else {
+      values.push(projected(value, info.types[agg.out]!));
+    }
+  }
+  values.push(row.entryCount, JSON.stringify(row.values));
+  return values;
 }
 
 function toStoredEntry(record: EntryRecord): StoredEntry {

@@ -16,7 +16,7 @@ import {
   reduceFull,
   toStoredEntries,
 } from './aggregates';
-import { canonicalJson } from './canonical';
+import { canonicalJson, pkKeyOf } from './canonical';
 import type { Engine, IndexRuntime } from './engine';
 import type { ReducedRow, StoredEntry } from './types';
 import { mapVersionOf } from './version';
@@ -28,19 +28,36 @@ export async function rebuildIndex(engine: Engine, name: string): Promise<void> 
   // BEFORE the scan — replayed overlap is idempotent, gaps would not be.
   const resumeCursor = await engine.source.currentCursor(collection);
 
+  // Fold the whole source IN MEMORY (map → group → reduceFull) — a scan
+  // never repeats a pk, so there is nothing to reconcile against. The
+  // store then gets bulk writes instead of per-row query chatter, which is
+  // the difference between seconds and tens of minutes against a remote
+  // database (Neon RTTs × rows × queries-per-row adds up fast).
+  const { entries, byGroup } = await foldSource(engine, runtime);
+  const reduced = [...byGroup.entries()].map(([groupKey, groupEntries]) =>
+    reduceFull(runtime.aggregates, groupKey, groupEntries),
+  );
+
   await engine.store.transaction(async (tx) => {
     await tx.truncateIndex(name);
-    const dirtyGroups = new Set<string>();
-    await engine.source.scan(collection, async (pk, row) => {
-      await engine.applyChangeInTx(
-        runtime,
-        { pk, op: 'insert', after: row, seq: resumeCursor },
-        tx,
-        dirtyGroups,
-      );
-    });
-    for (const groupKey of dirtyGroups) {
-      await engine.reReduceInTx(runtime, groupKey, tx);
+    if (tx.insertEntries) {
+      await tx.insertEntries(name, entries);
+    } else {
+      // fallback: one replaceEntries per source row (post-truncate, the
+      // delete inside replaceEntries is a cheap no-op)
+      const byPk = new Map<string, StoredEntry[]>();
+      for (const entry of entries) {
+        const key = pkKeyOf(entry.pk);
+        byPk.set(key, [...(byPk.get(key) ?? []), entry]);
+      }
+      for (const rowEntries of byPk.values()) {
+        await tx.replaceEntries(name, rowEntries[0]!.pk, rowEntries);
+      }
+    }
+    if (tx.putReducedMany) {
+      await tx.putReducedMany(name, reduced);
+    } else {
+      for (const row of reduced) await tx.putReduced(name, row);
     }
     await tx.setCursor(name, resumeCursor);
     await tx.setIndexMeta(name, { mapVersion: mapVersionOf(runtime.def) });
@@ -104,18 +121,29 @@ async function expectedReduced(
   engine: Engine,
   runtime: IndexRuntime,
 ): Promise<Map<string, ReducedRow>> {
-  const byGroup = new Map<string, StoredEntry[]>();
-  await engine.source.scan(runtime.def.collection, (pk, row) => {
-    const mapped = normalizeMapOutput(runtime.name, runtime.def.map(row));
-    for (const entry of toStoredEntries(runtime.def.reduce.groupBy, pk, mapped)) {
-      const list = byGroup.get(entry.groupKey) ?? [];
-      list.push(entry);
-      byGroup.set(entry.groupKey, list);
-    }
-  });
+  const { byGroup } = await foldSource(engine, runtime);
   const expected = new Map<string, ReducedRow>();
   for (const [groupKey, entries] of byGroup) {
     expected.set(groupKey, reduceFull(runtime.aggregates, groupKey, entries));
   }
   return expected;
+}
+
+/** One scan folded to entries (in scan order) and entries-by-group. */
+async function foldSource(
+  engine: Engine,
+  runtime: IndexRuntime,
+): Promise<{ entries: StoredEntry[]; byGroup: Map<string, StoredEntry[]> }> {
+  const entries: StoredEntry[] = [];
+  const byGroup = new Map<string, StoredEntry[]>();
+  await engine.source.scan(runtime.def.collection, (pk, row) => {
+    const mapped = normalizeMapOutput(runtime.name, runtime.def.map(row));
+    for (const entry of toStoredEntries(runtime.def.reduce.groupBy, pk, mapped)) {
+      entries.push(entry);
+      const list = byGroup.get(entry.groupKey) ?? [];
+      list.push(entry);
+      byGroup.set(entry.groupKey, list);
+    }
+  });
+  return { entries, byGroup };
 }

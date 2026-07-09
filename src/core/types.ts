@@ -234,6 +234,19 @@ export interface StoreTx {
 
   getIndexMeta(index: string): Promise<IndexMeta | null>;
   setIndexMeta(index: string, meta: IndexMeta): Promise<void>;
+
+  // --- optional bulk fast paths (used by rebuild) ---------------------------
+
+  /**
+   * Insert many entries at once into an index KNOWN TO BE EMPTY for their
+   * pks (rebuild calls this right after truncateIndex). SQL stores batch
+   * these into multi-row inserts — the difference between seconds and
+   * tens of minutes when the database is remote.
+   */
+  insertEntries?(index: string, entries: StoredEntry[]): Promise<void>;
+
+  /** Upsert many reduced rows at once. Group keys MUST be distinct. */
+  putReducedMany?(index: string, rows: ReducedRow[]): Promise<void>;
 }
 
 export interface Store {
