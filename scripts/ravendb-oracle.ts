@@ -20,9 +20,9 @@ import { sqliteSource, sqliteStore } from '../src/sqlite/index';
 
 const RAVEN_URL = process.env.RAVEN_URL ?? 'http://etna:9000';
 const RAVEN_DB = process.env.RAVEN_DB ?? 'Fuse3';
-const HOTELS = (
-  process.env.HOTELS ?? 'hotels/32546,hotels/30816,hotels/27959,hotels/32645'
-).split(',');
+const HOTELS = (process.env.HOTELS ?? 'hotels/32546,hotels/30816,hotels/27959,hotels/32645').split(
+  ',',
+);
 
 /** RavenDB's DateTime.MinValue serialization — the index's `where` filter. */
 const MIN_DATE = '0001-01-01T00:00:00.0000000';
@@ -175,9 +175,7 @@ const taskCompletions = ripply.defineIndex('TaskCompletionsByTechDate', {
   },
 });
 
-const insert = db.query(
-  `INSERT INTO hotel_rooms (id, hotel_id, doc) VALUES (?1, ?2, ?3)`,
-);
+const insert = db.query(`INSERT INTO hotel_rooms (id, hotel_id, doc) VALUES (?1, ?2, ?3)`);
 const insertDoc = (doc: Record<string, unknown>) => {
   const meta = doc['@metadata'] as Record<string, unknown>;
   const { ['@metadata']: _dropped, ...body } = doc;
@@ -224,8 +222,7 @@ for (const hotel of HOTELS) {
     for (const key of diff.missing.slice(0, 5)) console.log(`     missing: ${key}`);
     for (const key of diff.extra.slice(0, 5)) console.log(`     extra:   ${key}`);
     for (const line of diff.mismatched.slice(0, 5)) console.log(`     count:   ${line}`);
-    const more =
-      diff.missing.length + diff.extra.length + diff.mismatched.length - 15;
+    const more = diff.missing.length + diff.extra.length + diff.mismatched.length - 15;
     if (more > 0) console.log(`     … and ${more} more`);
   }
 }

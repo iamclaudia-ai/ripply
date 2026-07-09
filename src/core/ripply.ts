@@ -16,12 +16,7 @@
  */
 
 import { canonicalJson } from './canonical';
-import {
-  createEngine,
-  type CreateEngineOptions,
-  type Engine,
-  type IndexRuntime,
-} from './engine';
+import { createEngine, type CreateEngineOptions, type Engine, type IndexRuntime } from './engine';
 import { RipplyError } from './errors';
 import type { VerifyResult } from './rebuild';
 import type {
@@ -55,11 +50,7 @@ export interface CreateRipplyOptions extends CreateEngineOptions {
  * the map's entry type (`TEntry`) so the query surface can be typed:
  * `.value()` only accepts real aggregate names, `.entries()` returns TEntry.
  */
-export interface TypedIndexDefinition<
-  TRow extends Row,
-  TEntry extends Entry,
-  TAgg extends string,
-> {
+export interface TypedIndexDefinition<TRow extends Row, TEntry extends Entry, TAgg extends string> {
   collection: string;
   map: MapFn<TRow, TEntry>;
   reduce: {
@@ -111,11 +102,7 @@ export class Ripply {
       ((error) => console.error('[ripply] background processing failed:', error));
   }
 
-  defineIndex<
-    TRow extends Row = Row,
-    TEntry extends Entry = Entry,
-    TAgg extends string = string,
-  >(
+  defineIndex<TRow extends Row = Row, TEntry extends Entry = Entry, TAgg extends string = string>(
     name: string,
     def: TypedIndexDefinition<TRow, TEntry, TAgg>,
   ): IndexQuery<TEntry, TAgg> {
@@ -272,18 +259,14 @@ export class IndexQuery<TEntry extends Entry = Entry, TAgg extends string = stri
 
   /** Drill-down: the stored entries behind the matching groups, with pks. */
   async entries(): Promise<Array<{ pk: PkValue; entry: TEntry }>> {
-    const entries = await this.context.withTx(this.name, (tx) =>
-      tx.allEntries(this.name),
-    );
+    const entries = await this.context.withTx(this.name, (tx) => tx.allEntries(this.name));
     return entries
       .filter((entry) => this.matches((key) => entry.values[key]))
       .map((entry) => ({ pk: entry.pk, entry: entry.values as TEntry }));
   }
 
   private async matchedRows(): Promise<ReducedRow[]> {
-    const rows = await this.context.withTx(this.name, (tx) =>
-      tx.allReduced(this.name),
-    );
+    const rows = await this.context.withTx(this.name, (tx) => tx.allReduced(this.name));
     return rows.filter((row) => this.matches((key) => row.group[key]));
   }
 

@@ -186,9 +186,7 @@ export class SqliteStore implements Store {
         return ident(column);
       });
       const indexName = ident(`${info.table}__${sqlIndex.join('_')}`);
-      this.db.exec(
-        `CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${columns.join(', ')})`,
-      );
+      this.db.exec(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${columns.join(', ')})`);
     }
 
     this.tallies.set(name, info);
@@ -336,9 +334,7 @@ class SqliteStoreTx implements StoreTx {
 
   async deleteReduced(index: string, groupKey: string): Promise<void> {
     const info = this.tally(index);
-    this.db
-      .query(`DELETE FROM ${ident(info.table)} WHERE group_key = ?1`)
-      .run(groupKey);
+    this.db.query(`DELETE FROM ${ident(info.table)} WHERE group_key = ?1`).run(groupKey);
   }
 
   async allReduced(index: string): Promise<ReducedRow[]> {

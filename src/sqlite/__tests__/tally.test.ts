@@ -26,13 +26,7 @@ function setupDb() {
   return db;
 }
 
-const insertWorkOrder = (
-  db: Database,
-  id: string,
-  tech: string,
-  revenue: number,
-  day: string,
-) =>
+const insertWorkOrder = (db: Database, id: string, tech: string, revenue: number, day: string) =>
   db
     .query(
       `INSERT INTO work_orders (id, technician_id, revenue, completed_day)
@@ -76,9 +70,7 @@ test('the tally is a real table: plain SQL, declared indexes, avg components', a
        ORDER BY day`,
     )
     .all();
-  expect(rows).toEqual([
-    { tech: 't1', day: '2026-07-01', revenue: 400, jobs: 2, avgRevenue: 200 },
-  ]);
+  expect(rows).toEqual([{ tech: 't1', day: '2026-07-01', revenue: 400, jobs: 2, avgRevenue: 200 }]);
 
   // avg components are real columns too — downstream rollups stay exact
   const components = db
@@ -103,9 +95,7 @@ test('the tally is a real table: plain SQL, declared indexes, avg components', a
   await ripply.drain();
   expect(
     db
-      .query(
-        `SELECT revenue, jobs, avgRevenue FROM ripply_revenueByTechDay WHERE tech = 't1'`,
-      )
+      .query(`SELECT revenue, jobs, avgRevenue FROM ripply_revenueByTechDay WHERE tech = 't1'`)
       .get(),
   ).toEqual({ revenue: 100, jobs: 1, avgRevenue: 100 });
 
@@ -168,9 +158,7 @@ test('cascade: day tally → month tally, incremental all the way down', async (
 
   // …and the month tally is ALSO a real table
   expect(
-    db
-      .query(`SELECT revenue, jobs FROM ripply_revenueByMonth WHERE month = '2026-07'`)
-      .get(),
+    db.query(`SELECT revenue, jobs FROM ripply_revenueByMonth WHERE month = '2026-07'`).get(),
   ).toEqual({ revenue: 450, jobs: 3 });
 
   // live: a delete retracts through BOTH levels in one drain

@@ -25,13 +25,7 @@ import {
 import { tallyTableOf } from './canonical';
 import { RipplyError } from './errors';
 import { rebuildIndex, verifyIndex, type VerifyResult } from './rebuild';
-import type {
-  Change,
-  IndexDefinition,
-  Source,
-  Store,
-  StoreTx,
-} from './types';
+import type { Change, IndexDefinition, Source, Store, StoreTx } from './types';
 import { mapVersionOf } from './version';
 
 export interface CreateEngineOptions {
@@ -84,9 +78,7 @@ export class Engine {
     const columns = new Set(def.reduce.groupBy);
     for (const { out } of aggregates) {
       if (columns.has(out)) {
-        throw new RipplyError(
-          `index "${name}": aggregate "${out}" collides with a groupBy field`,
-        );
+        throw new RipplyError(`index "${name}": aggregate "${out}" collides with a groupBy field`);
       }
       columns.add(out);
     }
@@ -114,9 +106,7 @@ export class Engine {
     }
     for (const column of Object.keys(def.columnTypes ?? {})) {
       if (!typedColumns.has(column)) {
-        throw new RipplyError(
-          `index "${name}": columnTypes key "${column}" is not a tally column`,
-        );
+        throw new RipplyError(`index "${name}": columnTypes key "${column}" is not a tally column`);
       }
     }
 
@@ -178,9 +168,7 @@ export class Engine {
     const visit = (name: string, path: string[]): void => {
       const mark = state.get(name);
       if (mark === 'visiting') {
-        throw new RipplyError(
-          `cascading index cycle: ${[...path, name].join(' → ')}`,
-        );
+        throw new RipplyError(`cascading index cycle: ${[...path, name].join(' → ')}`);
       }
       if (mark === 'done') return;
       state.set(name, 'visiting');
@@ -202,7 +190,7 @@ export class Engine {
         groupBy: [...runtime.def.reduce.groupBy],
         aggregates: runtime.aggregates.map(({ out, fn }) => ({ out, fn })),
         sqlIndexes: (runtime.def.indexes ?? []).map((columns) => [...columns]),
-        columnTypes: { ...(runtime.def.columnTypes ?? {}) },
+        columnTypes: { ...runtime.def.columnTypes },
       });
     }
     this.ensuredStorage.add(name);
@@ -226,11 +214,7 @@ export class Engine {
     await this.ensureStorage(name);
     return this.store.transaction(async (tx) => {
       const cursor = await tx.getCursor(name);
-      const batch = await this.source.poll(
-        runtime.def.collection,
-        cursor,
-        this.batchSize,
-      );
+      const batch = await this.source.poll(runtime.def.collection, cursor, this.batchSize);
       if (batch.changes.length === 0) return 0;
 
       const dirtyGroups = new Set<string>();
@@ -331,20 +315,13 @@ export class Engine {
   }
 
   /** @internal Recompute one group from its (post-replace) entries. */
-  async reReduceInTx(
-    runtime: IndexRuntime,
-    groupKey: string,
-    tx: StoreTx,
-  ): Promise<void> {
+  async reReduceInTx(runtime: IndexRuntime, groupKey: string, tx: StoreTx): Promise<void> {
     const entries = await tx.readGroupEntries(runtime.name, groupKey);
     if (entries.length === 0) {
       await tx.deleteReduced(runtime.name, groupKey);
       return;
     }
-    await tx.putReduced(
-      runtime.name,
-      reduceFull(runtime.aggregates, groupKey, entries),
-    );
+    await tx.putReduced(runtime.name, reduceFull(runtime.aggregates, groupKey, entries));
   }
 }
 

@@ -11,14 +11,7 @@
 
 import { canonicalJson, groupKeyOf, groupOfKey, pkKeyOf } from './canonical';
 import { RipplyError } from './errors';
-import type {
-  AggregateFn,
-  Entry,
-  PkValue,
-  ReduceSpec,
-  ReducedRow,
-  StoredEntry,
-} from './types';
+import type { AggregateFn, Entry, PkValue, ReduceSpec, ReducedRow, StoredEntry } from './types';
 
 export interface ParsedAggregate {
   /** Output field name on the reduced row. */
@@ -57,9 +50,7 @@ export function parseReduceSpec(spec: ReduceSpec): ParsedAggregate[] {
     }
     const pairs = Object.entries(aggSpec);
     if (pairs.length !== 1) {
-      throw new RipplyError(
-        `aggregate "${out}": expected exactly one { fn: field } pair`,
-      );
+      throw new RipplyError(`aggregate "${out}": expected exactly one { fn: field } pair`);
     }
     const [fn, field] = pairs[0]!;
     assertAggregateFn(out, fn);
@@ -177,9 +168,7 @@ function reduceOne(agg: ParsedAggregate, ordered: StoredEntry[]): unknown {
     case 'first':
       return ordered.length ? (ordered[0]!.values[agg.field!] ?? null) : null;
     case 'last':
-      return ordered.length
-        ? (ordered[ordered.length - 1]!.values[agg.field!] ?? null)
-        : null;
+      return ordered.length ? (ordered[ordered.length - 1]!.values[agg.field!] ?? null) : null;
     case 'distinct': {
       const seen = new Map<string, unknown>();
       for (const entry of ordered) {
@@ -211,9 +200,7 @@ export function applyLinearDelta(
   oldEntries: Entry[],
   newEntries: Entry[],
 ): ReducedRow {
-  const values: Record<string, unknown> = current
-    ? { ...current.values }
-    : initValues(aggregates);
+  const values: Record<string, unknown> = current ? { ...current.values } : initValues(aggregates);
 
   for (const agg of aggregates) {
     switch (agg.fn) {

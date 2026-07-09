@@ -58,9 +58,7 @@ export type AggregateFn = LinearAggregateFn | NonLinearAggregateFn;
  * - `{ max: 'revenue' }` — aggregate over an explicitly named entry field.
  *   `{ count: 'field' }` counts entries whose field is non-null.
  */
-export type AggregateSpec =
-  | AggregateFn
-  | { [F in AggregateFn]: Record<F, string> }[AggregateFn];
+export type AggregateSpec = AggregateFn | { [F in AggregateFn]: Record<F, string> }[AggregateFn];
 
 export interface ReduceSpec {
   /** Entry fields that form the group key (canonical JSON, sorted keys). */
@@ -140,10 +138,7 @@ export interface Source {
   poll(collection: string, cursor: Cursor, limit: number): Promise<ChangeBatch>;
 
   /** Full-table scan, used by rebuild. */
-  scan(
-    collection: string,
-    onRow: (pk: PkValue, row: Row) => void | Promise<void>,
-  ): Promise<void>;
+  scan(collection: string, onRow: (pk: PkValue, row: Row) => void | Promise<void>): Promise<void>;
 
   /**
    * The feed position "as of now". Rebuild captures this BEFORE scanning and

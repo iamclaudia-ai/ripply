@@ -56,9 +56,7 @@ ripply.defineIndex('ordersByStatus', {
 ripply.defineIndex('revenueByTech', {
   collection: 'work_orders',
   map: (wo) =>
-    wo.status === 'completed'
-      ? { tech: wo.technician, revenue: wo.revenue as number, n: 1 }
-      : null,
+    wo.status === 'completed' ? { tech: wo.technician, revenue: wo.revenue as number, n: 1 } : null,
   reduce: {
     groupBy: ['tech'],
     aggregate: { revenue: 'sum', jobs: { sum: 'n' }, avgJob: { avg: 'revenue' } },
@@ -157,7 +155,10 @@ function performRandomOp(): void {
     const id = pick(live);
     const order = randomOrder(id);
     updateStmt.run(order.id, order.status, order.technician, order.revenue, order.completed_day);
-    logOp('update', `~ ${id}  → ${order.status}  $${order.revenue}${order.completed_day ? '  ' + order.completed_day : ''}`);
+    logOp(
+      'update',
+      `~ ${id}  → ${order.status}  $${order.revenue}${order.completed_day ? '  ' + order.completed_day : ''}`,
+    );
   } else {
     const id = live.splice(Math.floor(Math.random() * live.length), 1)[0]!;
     db.query(`DELETE FROM work_orders WHERE id = ?1`).run(id);
@@ -190,21 +191,15 @@ function snapshot() {
       .query(`SELECT status, orders FROM ripply_ordersByStatus ORDER BY orders DESC`)
       .all(),
     byTech: db
-      .query(
-        `SELECT tech, revenue, jobs, avgJob FROM ripply_revenueByTech ORDER BY revenue DESC`,
-      )
+      .query(`SELECT tech, revenue, jobs, avgJob FROM ripply_revenueByTech ORDER BY revenue DESC`)
       .all(),
     byDay: (
       db
-        .query(
-          `SELECT day, revenue, jobs FROM ripply_revenueByDay ORDER BY day DESC LIMIT 21`,
-        )
+        .query(`SELECT day, revenue, jobs FROM ripply_revenueByDay ORDER BY day DESC LIMIT 21`)
         .all() as Array<Record<string, unknown>>
     ).reverse(),
     byMonth: db
-      .query(
-        `SELECT month, revenue, jobs, peakDay FROM ripply_revenueByMonth ORDER BY month`,
-      )
+      .query(`SELECT month, revenue, jobs, peakDay FROM ripply_revenueByMonth ORDER BY month`)
       .all(),
     ops: [...opsLog].reverse(),
   };

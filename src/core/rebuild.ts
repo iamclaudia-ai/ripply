@@ -11,11 +11,7 @@
  * writes are quiesced or expect false positives from in-flight changes.
  */
 
-import {
-  normalizeMapOutput,
-  reduceFull,
-  toStoredEntries,
-} from './aggregates';
+import { normalizeMapOutput, reduceFull, toStoredEntries } from './aggregates';
 import { canonicalJson, pkKeyOf } from './canonical';
 import type { Engine, IndexRuntime } from './engine';
 import type { ReducedRow, StoredEntry } from './types';
@@ -74,10 +70,7 @@ export interface VerifyResult {
   mismatchedGroups: string[];
 }
 
-export async function verifyIndex(
-  engine: Engine,
-  name: string,
-): Promise<VerifyResult> {
+export async function verifyIndex(engine: Engine, name: string): Promise<VerifyResult> {
   const runtime = engine.runtimeOf(name);
 
   const expected = await expectedReduced(engine, runtime);
@@ -106,10 +99,7 @@ export async function verifyIndex(
   }
 
   return {
-    ok:
-      missingGroups.length === 0 &&
-      extraGroups.length === 0 &&
-      mismatchedGroups.length === 0,
+    ok: missingGroups.length === 0 && extraGroups.length === 0 && mismatchedGroups.length === 0,
     missingGroups,
     extraGroups,
     mismatchedGroups,

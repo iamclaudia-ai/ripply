@@ -87,11 +87,7 @@ export function oracleReduce(
   for (const { pk, row } of rows) {
     const output = def.map(row);
     const entries =
-      output === null || output === undefined
-        ? []
-        : Array.isArray(output)
-          ? output
-          : [output];
+      output === null || output === undefined ? [] : Array.isArray(output) ? output : [output];
     entries.forEach((values, ord) => {
       const groupObj: Record<string, unknown> = {};
       for (const field of def.reduce.groupBy) groupObj[field] = values[field];
@@ -105,18 +101,12 @@ export function oracleReduce(
   // 2. reduce each group naively
   const result = new Map<string, OracleGroup>();
   for (const [groupKey, entries] of groups) {
-    entries.sort((a, b) =>
-      a.pkKey !== b.pkKey ? (a.pkKey < b.pkKey ? -1 : 1) : a.ord - b.ord,
-    );
+    entries.sort((a, b) => (a.pkKey !== b.pkKey ? (a.pkKey < b.pkKey ? -1 : 1) : a.ord - b.ord));
     const values: Record<string, unknown> = {};
     for (const [out, spec] of Object.entries(def.reduce.aggregate)) {
       const fn = typeof spec === 'string' ? spec : Object.keys(spec)[0]!;
       const field =
-        typeof spec === 'string'
-          ? fn === 'count'
-            ? null
-            : out
-          : Object.values(spec)[0]!;
+        typeof spec === 'string' ? (fn === 'count' ? null : out) : Object.values(spec)[0]!;
       const raw = entries.map((e) => (field === null ? undefined : e.values[field]));
       const present = raw.filter((v) => v !== null && v !== undefined);
       const numbers = present as number[];

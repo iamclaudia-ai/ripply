@@ -97,9 +97,7 @@ test('install is idempotent and refreshes triggers after schema changes', async 
   // schema evolves — re-install regenerates triggers with the new column
   db.exec(`ALTER TABLE work_orders ADD COLUMN priority TEXT`);
   await source.install('work_orders');
-  db.query(
-    `INSERT INTO work_orders (id, status, priority) VALUES ('b', 'pending', 'high')`,
-  ).run();
+  db.query(`INSERT INTO work_orders (id, status, priority) VALUES ('b', 'pending', 'high')`).run();
   batch = await source.poll('work_orders', batch.nextCursor, 100);
   expect(batch.changes[0]!.after).toEqual({ id: 'b', status: 'pending', priority: 'high' });
 
@@ -113,9 +111,7 @@ test('unknown tables, missing pk columns, and hostile identifiers are rejected',
     sqliteSource({ db, collections: { missing: { pk: ['id'] } } }).install('missing'),
   ).rejects.toThrow('does not exist');
   await expect(
-    sqliteSource({ db, collections: { work_orders: { pk: ['nope'] } } }).install(
-      'work_orders',
-    ),
+    sqliteSource({ db, collections: { work_orders: { pk: ['nope'] } } }).install('work_orders'),
   ).rejects.toThrow('no pk column');
   await expect(
     sqliteSource({

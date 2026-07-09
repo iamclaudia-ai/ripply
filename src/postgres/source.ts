@@ -49,14 +49,7 @@
 
 import type { SQL } from 'bun';
 import { RipplyError } from '../core/errors';
-import type {
-  Change,
-  ChangeBatch,
-  Cursor,
-  PkValue,
-  Row,
-  Source,
-} from '../core/types';
+import type { Change, ChangeBatch, Cursor, PkValue, Row, Source } from '../core/types';
 
 export interface PostgresSourceOptions {
   sql: SQL;

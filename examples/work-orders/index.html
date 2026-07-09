@@ -1,445 +1,912 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ripply 🌊 live tallies</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌊</text></svg>" />
-<style>
-  /* ── ocean tokens ─────────────────────────────────────────────────── */
-  :root {
-    --page:      #0a0e13;
-    --surface:   #10161d;
-    --surface-2: #141c25;
-    --ink:       #eef4f9;
-    --ink-2:     #9fb0bd;
-    --muted:     #64768a;
-    --grid:      #1d2630;
-    --baseline:  #2a3542;
-    --series:    #3987e5;            /* validated vs surface, 4.9:1 */
-    --series-dim:#16324f;            /* lighter-step track of the same ramp */
-    --good:      #0ca30c;
-    --critical:  #d03b3b;
-    --ring:      rgba(57, 135, 229, 0.35);
-    --font-display: "Futura", "Avenir Next", "Century Gothic", ui-sans-serif, sans-serif;
-    --font-body: "Avenir Next", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
-    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; }
-  body {
-    background:
-      radial-gradient(1100px 500px at 85% -10%, rgba(57,135,229,0.08), transparent 60%),
-      radial-gradient(700px 400px at -10% 110%, rgba(25,158,112,0.05), transparent 60%),
-      var(--page);
-    color: var(--ink);
-    font-family: var(--font-body);
-    font-size: 14px;
-    line-height: 1.45;
-    padding: 28px clamp(16px, 4vw, 48px) 40px;
-  }
-  .wrap { max-width: 1180px; margin: 0 auto; }
-
-  /* ── header ───────────────────────────────────────────────────────── */
-  header { display: flex; align-items: baseline; gap: 18px; position: relative; padding: 6px 0 22px; }
-  .wordmark {
-    font-family: var(--font-display);
-    font-size: 34px; font-weight: 600; letter-spacing: 0.04em;
-    background: linear-gradient(105deg, #eef4f9 30%, #6da7ec 75%, #3987e5);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .tagline { color: var(--ink-2); font-size: 13px; }
-  .tagline code { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
-  .live { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
-  .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); position: relative; }
-  .live-dot::after {
-    content: ""; position: absolute; inset: -3px; border-radius: 50%;
-    border: 2px solid var(--good); opacity: 0.6; animation: ripple 2.2s ease-out infinite;
-  }
-  .live.down .live-dot { background: var(--critical); }
-  .live.down .live-dot::after { border-color: var(--critical); }
-  @keyframes ripple { 0% { transform: scale(0.6); opacity: 0.7; } 100% { transform: scale(2.4); opacity: 0; } }
-  .rings { position: absolute; right: 120px; top: -30px; opacity: 0.5; pointer-events: none; }
-  .rings circle { fill: none; stroke: var(--series); stroke-width: 1; transform-origin: center; animation: ringout 7s ease-out infinite; }
-  .rings circle:nth-child(2) { animation-delay: 2.3s; }
-  .rings circle:nth-child(3) { animation-delay: 4.6s; }
-  @keyframes ringout { 0% { transform: scale(0.15); opacity: 0.8; } 100% { transform: scale(1); opacity: 0; } }
-
-  /* ── stat tiles ───────────────────────────────────────────────────── */
-  .stats { display: grid; grid-template-columns: 1.6fr repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
-  .tile {
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 10px; padding: 14px 16px 12px;
-  }
-  .tile .label { color: var(--ink-2); font-size: 12px; margin-bottom: 4px; }
-  .tile .value { font-weight: 600; font-size: 22px; }
-  .tile.hero .value { font-size: 46px; letter-spacing: -0.01em; line-height: 1.1; }
-  .tile .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
-  .tile .sub b { color: var(--good); font-weight: 600; }
-
-  /* ── cards & grid ─────────────────────────────────────────────────── */
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .card {
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 12px; padding: 18px 20px 14px; min-width: 0;
-  }
-  .card h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--ink); }
-  .card .sub { color: var(--muted); font-size: 11.5px; margin: 2px 0 14px; }
-  .card .sub code { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-2); }
-  .span2 { grid-column: span 2; }
-
-  /* staggered entry */
-  .tile, .card { animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .tile:nth-child(2), .card:nth-child(2) { animation-delay: 0.05s; }
-  .tile:nth-child(3), .card:nth-child(3) { animation-delay: 0.1s; }
-  .tile:nth-child(4), .card:nth-child(4) { animation-delay: 0.15s; }
-  .tile:nth-child(5), .card:nth-child(5) { animation-delay: 0.2s; }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-
-  /* ── horizontal bars ──────────────────────────────────────────────── */
-  .hrows { display: flex; flex-direction: column; gap: 9px; }
-  .hrow { display: grid; grid-template-columns: 74px 1fr 74px; align-items: center; gap: 10px; }
-  .hlabel { color: var(--ink-2); font-size: 12.5px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .htrack { border-left: 1px solid var(--baseline); padding: 1px 0; }
-  .hbar {
-    height: 16px; background: var(--series);
-    border-radius: 0 4px 4px 0;               /* rounded data-end, square baseline */
-    min-width: 2px; width: 0;
-    transition: width 0.45s cubic-bezier(0.25, 0.8, 0.3, 1);
-  }
-  .hval { font-size: 12.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
-  .hval small { color: var(--muted); font-size: 10.5px; }
-
-  /* ── day columns ──────────────────────────────────────────────────── */
-  .plot { position: relative; height: 168px; margin-top: 4px; }
-  .gridline { position: absolute; left: 26px; right: 0; height: 1px; background: var(--grid); }
-  .gridline span { position: absolute; left: -26px; top: -6px; width: 22px; text-align: right; font-size: 9px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .cols { position: absolute; left: 30px; right: 0; top: 0; bottom: 18px; display: flex; align-items: flex-end; gap: 3px; border-bottom: 1px solid var(--baseline); }
-  .colslot { flex: 1; max-width: 26px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; position: relative; }
-  .col {
-    background: var(--series); border-radius: 4px 4px 0 0; min-height: 2px;
-    transition: height 0.45s cubic-bezier(0.25, 0.8, 0.3, 1); height: 0;
-  }
-  .colmax { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--ink-2); white-space: nowrap; }
-  .collabel { position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%); font-size: 9px; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-  /* ── month meters ─────────────────────────────────────────────────── */
-  .months { display: flex; flex-direction: column; gap: 14px; }
-  .month { display: grid; grid-template-columns: 64px 1fr; gap: 12px; align-items: center; }
-  .month .name { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); }
-  .meter { height: 16px; background: var(--series-dim); border-radius: 4px; overflow: hidden; }
-  .meter > div { height: 100%; background: var(--series); border-radius: 0 4px 4px 0; transition: width 0.45s cubic-bezier(0.25, 0.8, 0.3, 1); width: 0; }
-  .month .figs { grid-column: 2; display: flex; gap: 16px; font-size: 11.5px; color: var(--muted); margin-top: -6px; }
-  .month .figs b { color: var(--ink); font-weight: 600; font-size: 13px; }
-  .cascade {
-    display: flex; align-items: center; gap: 10px; margin: 4px 0 16px;
-    font-family: var(--font-mono); font-size: 10.5px; color: var(--muted);
-    background: var(--surface-2); border: 1px dashed var(--baseline);
-    border-radius: 8px; padding: 8px 12px;
-  }
-  .cascade b { color: #6da7ec; font-weight: 500; }
-  .cascade .arrow { color: var(--series); animation: flow 1.6s ease-in-out infinite; }
-  @keyframes flow { 0%, 100% { transform: translateX(0); opacity: 0.6; } 50% { transform: translateX(4px); opacity: 1; } }
-
-  /* ── change feed ──────────────────────────────────────────────────── */
-  .feed { font-family: var(--font-mono); font-size: 11.5px; display: flex; flex-direction: column; gap: 5px; min-height: 168px; }
-  .feed .op { color: var(--ink-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; animation: rise 0.3s ease both; font-variant-numeric: tabular-nums; }
-  .feed .op.insert { color: var(--good); }
-  .feed .op.delete { color: var(--critical); }
-
-  /* value-change flash: a ripple, of course */
-  .flash { animation: pulse 0.7s ease-out; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--ring); } 100% { box-shadow: 0 0 0 12px transparent; } }
-
-  /* ── tooltip & table twins ────────────────────────────────────────── */
-  #tip {
-    position: fixed; pointer-events: none; z-index: 10; display: none;
-    background: #060a0f; border: 1px solid var(--baseline); border-radius: 7px;
-    padding: 7px 10px; font-size: 11.5px; color: var(--ink-2);
-    box-shadow: 0 6px 24px rgba(0,0,0,0.5); max-width: 240px;
-  }
-  #tip b { color: var(--ink); font-weight: 600; }
-  details.twin { margin-top: 12px; border-top: 1px solid var(--grid); padding-top: 8px; }
-  details.twin summary { cursor: pointer; color: var(--muted); font-size: 11px; user-select: none; }
-  details.twin table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
-  details.twin th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--grid); }
-  details.twin td { color: var(--ink-2); padding: 3px 8px 3px 0; border-bottom: 1px solid var(--grid); }
-
-  footer { margin-top: 18px; color: var(--muted); font-size: 11px; }
-  footer code { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-2); }
-
-  @media (max-width: 880px) {
-    .stats { grid-template-columns: 1fr 1fr; }
-    .grid { grid-template-columns: 1fr; }
-    .span2 { grid-column: span 1; }
-    .rings { display: none; }
-  }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <header>
-    <svg class="rings" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
-      <circle cx="60" cy="60" r="56"></circle>
-      <circle cx="60" cy="60" r="56"></circle>
-      <circle cx="60" cy="60" r="56"></circle>
-    </svg>
-    <div class="wordmark">ripply</div>
-    <div class="tagline">live incremental map-reduce · <code>work_orders → tallies, no GROUP BY</code></div>
-    <div class="live" id="live"><span class="live-dot"></span><span id="live-text">live</span></div>
-  </header>
-
-  <section class="stats">
-    <div class="tile hero">
-      <div class="label">Completed revenue</div>
-      <div class="value" id="stat-revenue">—</div>
-      <div class="sub">sum of <code>ripply_revenueByMonth</code> — plain SQL</div>
-    </div>
-    <div class="tile"><div class="label">Work orders</div><div class="value" id="stat-orders">—</div><div class="sub">rows in the source table</div></div>
-    <div class="tile"><div class="label">Ops applied</div><div class="value" id="stat-ops">—</div><div class="sub">inserts · updates · deletes</div></div>
-    <div class="tile"><div class="label">Drain time</div><div class="value" id="stat-drain">—</div><div class="sub">avg <span id="stat-drain-avg">—</span> · full cascade</div></div>
-    <div class="tile"><div class="label">Changelog backlog</div><div class="value" id="stat-backlog">—</div><div class="sub"><b>auto-pruned</b> after every drain</div></div>
-  </section>
-
-  <section class="grid">
-    <div class="card">
-      <h2>Orders by status</h2>
-      <div class="sub">index <code>ordersByStatus</code> · count per group</div>
-      <div class="hrows" id="chart-status"></div>
-      <details class="twin"><summary>data table</summary><div id="table-status"></div></details>
-    </div>
-
-    <div class="card">
-      <h2>Revenue by technician</h2>
-      <div class="sub">index <code>revenueByTech</code> · completed only · hover for jobs &amp; avg</div>
-      <div class="hrows" id="chart-tech"></div>
-      <details class="twin"><summary>data table</summary><div id="table-tech"></div></details>
-    </div>
-
-    <div class="card">
-      <h2>Revenue by day</h2>
-      <div class="sub">index <code>revenueByDay</code> · last 21 days with activity</div>
-      <div class="plot" id="chart-day"></div>
-      <details class="twin"><summary>data table</summary><div id="table-day"></div></details>
-    </div>
-
-    <div class="card">
-      <h2>Revenue by month</h2>
-      <div class="sub">a <em>cascading</em> index — it consumes the day tally</div>
-      <div class="cascade"><b>ripply_revenueByDay</b> <span class="arrow">─▸</span> <b>ripply_revenueByMonth</b> · sums of sums · max of days</div>
-      <div class="months" id="chart-month"></div>
-      <details class="twin"><summary>data table</summary><div id="table-month"></div></details>
-    </div>
-
-    <div class="card span2">
-      <h2>Change feed</h2>
-      <div class="sub">the simulated app writing plain SQL — triggers ripple everything above</div>
-      <div class="feed" id="feed"></div>
-    </div>
-  </section>
-
-  <footer>
-    Every chart on this page is read with plain SQL from real tables —
-    <code>SELECT tech, revenue, jobs FROM ripply_revenueByTech ORDER BY revenue DESC</code> —
-    maintained incrementally by <code>ripply</code> 🌊
-  </footer>
-</div>
-
-<div id="tip"></div>
-
-<script>
-  const $ = (id) => document.getElementById(id);
-  const money = (v) =>
-    '$' + (v >= 100000 ? (v / 1000).toFixed(0) + 'K' : v >= 10000 ? (v / 1000).toFixed(1) + 'K' : Math.round(v).toLocaleString());
-  const num = (v) => Number(v).toLocaleString();
-
-  // ── shared tooltip ──────────────────────────────────────────────────
-  const tip = $('tip');
-  function bindTip(el, html) {
-    el.onmouseenter = () => { tip.innerHTML = html(); tip.style.display = 'block'; };
-    el.onmousemove = (e) => {
-      const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 10);
-      tip.style.left = x + 'px';
-      tip.style.top = (e.clientY + 14) + 'px';
-    };
-    el.onmouseleave = () => { tip.style.display = 'none'; };
-  }
-
-  // ── change-flash helper ─────────────────────────────────────────────
-  const prev = new Map();
-  function flashIfChanged(el, key, value) {
-    if (prev.has(key) && prev.get(key) !== value) {
-      el.classList.remove('flash');
-      void el.offsetWidth; // restart animation
-      el.classList.add('flash');
-    }
-    prev.set(key, value);
-  }
-
-  // ── stat tiles ──────────────────────────────────────────────────────
-  function setStat(id, text, key) {
-    const el = $(id);
-    el.textContent = text;
-    flashIfChanged(el.parentElement, key, text);
-  }
-
-  // ── keyed horizontal bars ───────────────────────────────────────────
-  function renderBars(rootId, rows, opts) {
-    const root = $(rootId);
-    const max = Math.max(1, ...rows.map((r) => r.value));
-    const seen = new Set();
-    for (const row of rows) {
-      seen.add(row.key);
-      let el = root.querySelector(`[data-key="${row.key}"]`);
-      if (!el) {
-        el = document.createElement('div');
-        el.className = 'hrow';
-        el.dataset.key = row.key;
-        el.innerHTML = '<span class="hlabel"></span><div class="htrack"><div class="hbar"></div></div><span class="hval"></span>';
-        root.appendChild(el);
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ripply 🌊 live tallies</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌊</text></svg>"
+    />
+    <style>
+      /* ── ocean tokens ─────────────────────────────────────────────────── */
+      :root {
+        --page: #0a0e13;
+        --surface: #10161d;
+        --surface-2: #141c25;
+        --ink: #eef4f9;
+        --ink-2: #9fb0bd;
+        --muted: #64768a;
+        --grid: #1d2630;
+        --baseline: #2a3542;
+        --series: #3987e5; /* validated vs surface, 4.9:1 */
+        --series-dim: #16324f; /* lighter-step track of the same ramp */
+        --good: #0ca30c;
+        --critical: #d03b3b;
+        --ring: rgba(57, 135, 229, 0.35);
+        --font-display: 'Futura', 'Avenir Next', 'Century Gothic', ui-sans-serif, sans-serif;
+        --font-body: 'Avenir Next', 'Helvetica Neue', ui-sans-serif, system-ui, sans-serif;
+        --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
       }
-      root.appendChild(el); // keep sorted order
-      el.querySelector('.hlabel').textContent = row.label;
-      el.querySelector('.hval').innerHTML = row.valueText;
-      requestAnimationFrame(() => {
-        el.querySelector('.hbar').style.width = (100 * row.value / max).toFixed(2) + '%';
-      });
-      bindTip(el.querySelector('.htrack'), () => row.tip);
-      flashIfChanged(el, rootId + row.key, row.valueText);
-    }
-    for (const el of [...root.children]) {
-      if (!seen.has(el.dataset.key)) el.remove();
-    }
-  }
-
-  // ── day columns ─────────────────────────────────────────────────────
-  function renderDays(days) {
-    const root = $('chart-day');
-    const max = Math.max(1, ...days.map((d) => d.revenue));
-    const maxTick = Math.ceil(max / 100) * 100;
-    root.innerHTML = '';
-    for (const frac of [0, 0.5, 1]) {
-      const line = document.createElement('div');
-      line.className = 'gridline';
-      line.style.bottom = (18 + frac * (168 - 18 - 16)) + 'px';
-      line.innerHTML = '<span>' + (frac ? money(maxTick * frac) : '0') + '</span>';
-      root.appendChild(line);
-    }
-    const cols = document.createElement('div');
-    cols.className = 'cols';
-    const maxDay = days.reduce((a, b) => (b.revenue > (a?.revenue ?? -1) ? b : a), null);
-    days.forEach((d, i) => {
-      const slot = document.createElement('div');
-      slot.className = 'colslot';
-      const col = document.createElement('div');
-      col.className = 'col';
-      slot.appendChild(col);
-      if (d === maxDay) {
-        const lbl = document.createElement('span');
-        lbl.className = 'colmax';
-        lbl.textContent = money(d.revenue);
-        slot.appendChild(lbl);
+      * {
+        box-sizing: border-box;
+        margin: 0;
       }
-      if (i === 0 || i === days.length - 1 || i % 5 === 0) {
-        const lbl = document.createElement('span');
-        lbl.className = 'collabel';
-        lbl.textContent = d.day.slice(5);
-        slot.appendChild(lbl);
+      html,
+      body {
+        height: 100%;
       }
-      bindTip(slot, () => `<b>${d.day}</b><br>revenue <b>${money(d.revenue)}</b> · ${num(d.jobs)} job${d.jobs === 1 ? '' : 's'}`);
-      cols.appendChild(slot);
-      requestAnimationFrame(() => {
-        col.style.height = (100 * d.revenue / maxTick).toFixed(2) + '%';
-      });
-    });
-    root.appendChild(cols);
-  }
-
-  // ── month meters ────────────────────────────────────────────────────
-  function renderMonths(months) {
-    const root = $('chart-month');
-    const max = Math.max(1, ...months.map((m) => m.revenue));
-    const seen = new Set();
-    for (const m of months) {
-      seen.add(m.month);
-      let el = root.querySelector(`[data-key="${m.month}"]`);
-      if (!el) {
-        el = document.createElement('div');
-        el.className = 'month';
-        el.dataset.key = m.month;
-        el.innerHTML = '<span class="name"></span><div class="meter"><div></div></div><div class="figs"></div>';
-        root.appendChild(el);
+      body {
+        background:
+          radial-gradient(1100px 500px at 85% -10%, rgba(57, 135, 229, 0.08), transparent 60%),
+          radial-gradient(700px 400px at -10% 110%, rgba(25, 158, 112, 0.05), transparent 60%),
+          var(--page);
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 14px;
+        line-height: 1.45;
+        padding: 28px clamp(16px, 4vw, 48px) 40px;
       }
-      el.querySelector('.name').textContent = m.month;
-      el.querySelector('.figs').innerHTML =
-        `<span>revenue <b>${money(m.revenue)}</b></span><span>jobs <b>${num(m.jobs)}</b></span><span>peak day <b>${money(m.peakDay)}</b></span>`;
-      requestAnimationFrame(() => {
-        el.querySelector('.meter > div').style.width = (100 * m.revenue / max).toFixed(2) + '%';
-      });
-      bindTip(el.querySelector('.meter'), () => `<b>${m.month}</b><br>rolled up from the day tally`);
-      flashIfChanged(el, 'month' + m.month, m.revenue);
-    }
-    for (const el of [...root.children]) {
-      if (!seen.has(el.dataset.key)) el.remove();
-    }
-  }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+      }
 
-  // ── table twins ─────────────────────────────────────────────────────
-  function renderTable(rootId, headers, rows) {
-    $(rootId).innerHTML =
-      '<table><tr>' + headers.map((h) => `<th>${h}</th>`).join('') + '</tr>' +
-      rows.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') +
-      '</table>';
-  }
+      /* ── header ───────────────────────────────────────────────────────── */
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 18px;
+        position: relative;
+        padding: 6px 0 22px;
+      }
+      .wordmark {
+        font-family: var(--font-display);
+        font-size: 34px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        background: linear-gradient(105deg, #eef4f9 30%, #6da7ec 75%, #3987e5);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .tagline {
+        color: var(--ink-2);
+        font-size: 13px;
+      }
+      .tagline code {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .live {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink-2);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .live-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--good);
+        position: relative;
+      }
+      .live-dot::after {
+        content: '';
+        position: absolute;
+        inset: -3px;
+        border-radius: 50%;
+        border: 2px solid var(--good);
+        opacity: 0.6;
+        animation: ripple 2.2s ease-out infinite;
+      }
+      .live.down .live-dot {
+        background: var(--critical);
+      }
+      .live.down .live-dot::after {
+        border-color: var(--critical);
+      }
+      @keyframes ripple {
+        0% {
+          transform: scale(0.6);
+          opacity: 0.7;
+        }
+        100% {
+          transform: scale(2.4);
+          opacity: 0;
+        }
+      }
+      .rings {
+        position: absolute;
+        right: 120px;
+        top: -30px;
+        opacity: 0.5;
+        pointer-events: none;
+      }
+      .rings circle {
+        fill: none;
+        stroke: var(--series);
+        stroke-width: 1;
+        transform-origin: center;
+        animation: ringout 7s ease-out infinite;
+      }
+      .rings circle:nth-child(2) {
+        animation-delay: 2.3s;
+      }
+      .rings circle:nth-child(3) {
+        animation-delay: 4.6s;
+      }
+      @keyframes ringout {
+        0% {
+          transform: scale(0.15);
+          opacity: 0.8;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 0;
+        }
+      }
 
-  // ── feed ────────────────────────────────────────────────────────────
-  function renderFeed(ops) {
-    $('feed').innerHTML = ops
-      .map((o) => `<div class="op ${o.kind}">${o.line}</div>`)
-      .join('');
-  }
+      /* ── stat tiles ───────────────────────────────────────────────────── */
+      .stats {
+        display: grid;
+        grid-template-columns: 1.6fr repeat(4, 1fr);
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .tile {
+        background: var(--surface);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 10px;
+        padding: 14px 16px 12px;
+      }
+      .tile .label {
+        color: var(--ink-2);
+        font-size: 12px;
+        margin-bottom: 4px;
+      }
+      .tile .value {
+        font-weight: 600;
+        font-size: 22px;
+      }
+      .tile.hero .value {
+        font-size: 46px;
+        letter-spacing: -0.01em;
+        line-height: 1.1;
+      }
+      .tile .sub {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 2px;
+      }
+      .tile .sub b {
+        color: var(--good);
+        font-weight: 600;
+      }
 
-  // ── render everything ───────────────────────────────────────────────
-  function render(s) {
-    setStat('stat-revenue', money(s.stats.revenue), 'revenue');
-    setStat('stat-orders', num(s.stats.orders), 'orders');
-    setStat('stat-ops', num(s.stats.ops), 'ops');
-    setStat('stat-drain', s.stats.drainMs.toFixed(1) + 'ms', 'drain');
-    $('stat-drain-avg').textContent = s.stats.avgDrainMs.toFixed(1) + 'ms';
-    setStat('stat-backlog', num(s.stats.backlog), 'backlog');
+      /* ── cards & grid ─────────────────────────────────────────────────── */
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+        padding: 18px 20px 14px;
+        min-width: 0;
+      }
+      .card h2 {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--ink);
+      }
+      .card .sub {
+        color: var(--muted);
+        font-size: 11.5px;
+        margin: 2px 0 14px;
+      }
+      .card .sub code {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--ink-2);
+      }
+      .span2 {
+        grid-column: span 2;
+      }
 
-    renderBars('chart-status', s.byStatus.map((r) => ({
-      key: r.status, label: r.status, value: r.orders,
-      valueText: num(r.orders),
-      tip: `<b>${r.status}</b> · ${num(r.orders)} order${r.orders === 1 ? '' : 's'}`,
-    })));
-    renderTable('table-status', ['status', 'orders'], s.byStatus.map((r) => [r.status, num(r.orders)]));
+      /* staggered entry */
+      .tile,
+      .card {
+        animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+      }
+      .tile:nth-child(2),
+      .card:nth-child(2) {
+        animation-delay: 0.05s;
+      }
+      .tile:nth-child(3),
+      .card:nth-child(3) {
+        animation-delay: 0.1s;
+      }
+      .tile:nth-child(4),
+      .card:nth-child(4) {
+        animation-delay: 0.15s;
+      }
+      .tile:nth-child(5),
+      .card:nth-child(5) {
+        animation-delay: 0.2s;
+      }
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
 
-    renderBars('chart-tech', s.byTech.map((r) => ({
-      key: r.tech, label: r.tech, value: r.revenue,
-      valueText: `${money(r.revenue)} <small>· ${num(r.jobs)}j</small>`,
-      tip: `<b>${r.tech}</b><br>revenue <b>${money(r.revenue)}</b><br>${num(r.jobs)} jobs · avg <b>${money(r.avgJob ?? 0)}</b>`,
-    })));
-    renderTable('table-tech', ['tech', 'revenue', 'jobs', 'avg job'],
-      s.byTech.map((r) => [r.tech, money(r.revenue), num(r.jobs), money(r.avgJob ?? 0)]));
+      /* ── horizontal bars ──────────────────────────────────────────────── */
+      .hrows {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .hrow {
+        display: grid;
+        grid-template-columns: 74px 1fr 74px;
+        align-items: center;
+        gap: 10px;
+      }
+      .hlabel {
+        color: var(--ink-2);
+        font-size: 12.5px;
+        text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .htrack {
+        border-left: 1px solid var(--baseline);
+        padding: 1px 0;
+      }
+      .hbar {
+        height: 16px;
+        background: var(--series);
+        border-radius: 0 4px 4px 0; /* rounded data-end, square baseline */
+        min-width: 2px;
+        width: 0;
+        transition: width 0.45s cubic-bezier(0.25, 0.8, 0.3, 1);
+      }
+      .hval {
+        font-size: 12.5px;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .hval small {
+        color: var(--muted);
+        font-size: 10.5px;
+      }
 
-    renderDays(s.byDay);
-    renderTable('table-day', ['day', 'revenue', 'jobs'],
-      [...s.byDay].reverse().map((r) => [r.day, money(r.revenue), num(r.jobs)]));
+      /* ── day columns ──────────────────────────────────────────────────── */
+      .plot {
+        position: relative;
+        height: 168px;
+        margin-top: 4px;
+      }
+      .gridline {
+        position: absolute;
+        left: 26px;
+        right: 0;
+        height: 1px;
+        background: var(--grid);
+      }
+      .gridline span {
+        position: absolute;
+        left: -26px;
+        top: -6px;
+        width: 22px;
+        text-align: right;
+        font-size: 9px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .cols {
+        position: absolute;
+        left: 30px;
+        right: 0;
+        top: 0;
+        bottom: 18px;
+        display: flex;
+        align-items: flex-end;
+        gap: 3px;
+        border-bottom: 1px solid var(--baseline);
+      }
+      .colslot {
+        flex: 1;
+        max-width: 26px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        position: relative;
+      }
+      .col {
+        background: var(--series);
+        border-radius: 4px 4px 0 0;
+        min-height: 2px;
+        transition: height 0.45s cubic-bezier(0.25, 0.8, 0.3, 1);
+        height: 0;
+      }
+      .colmax {
+        position: absolute;
+        top: -16px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .collabel {
+        position: absolute;
+        bottom: -16px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 9px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
 
-    renderMonths(s.byMonth);
-    renderTable('table-month', ['month', 'revenue', 'jobs', 'peak day'],
-      s.byMonth.map((r) => [r.month, money(r.revenue), num(r.jobs), money(r.peakDay)]));
+      /* ── month meters ─────────────────────────────────────────────────── */
+      .months {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .month {
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        gap: 12px;
+        align-items: center;
+      }
+      .month .name {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .meter {
+        height: 16px;
+        background: var(--series-dim);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .meter > div {
+        height: 100%;
+        background: var(--series);
+        border-radius: 0 4px 4px 0;
+        transition: width 0.45s cubic-bezier(0.25, 0.8, 0.3, 1);
+        width: 0;
+      }
+      .month .figs {
+        grid-column: 2;
+        display: flex;
+        gap: 16px;
+        font-size: 11.5px;
+        color: var(--muted);
+        margin-top: -6px;
+      }
+      .month .figs b {
+        color: var(--ink);
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .cascade {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 4px 0 16px;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--muted);
+        background: var(--surface-2);
+        border: 1px dashed var(--baseline);
+        border-radius: 8px;
+        padding: 8px 12px;
+      }
+      .cascade b {
+        color: #6da7ec;
+        font-weight: 500;
+      }
+      .cascade .arrow {
+        color: var(--series);
+        animation: flow 1.6s ease-in-out infinite;
+      }
+      @keyframes flow {
+        0%,
+        100% {
+          transform: translateX(0);
+          opacity: 0.6;
+        }
+        50% {
+          transform: translateX(4px);
+          opacity: 1;
+        }
+      }
 
-    renderFeed(s.ops);
-  }
+      /* ── change feed ──────────────────────────────────────────────────── */
+      .feed {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-height: 168px;
+      }
+      .feed .op {
+        color: var(--ink-2);
+        white-space: pre;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        animation: rise 0.3s ease both;
+        font-variant-numeric: tabular-nums;
+      }
+      .feed .op.insert {
+        color: var(--good);
+      }
+      .feed .op.delete {
+        color: var(--critical);
+      }
 
-  // ── SSE ─────────────────────────────────────────────────────────────
-  const live = $('live');
-  const es = new EventSource('/events');
-  es.onmessage = (e) => render(JSON.parse(e.data));
-  es.onopen = () => { live.classList.remove('down'); $('live-text').textContent = 'live'; };
-  es.onerror = () => { live.classList.add('down'); $('live-text').textContent = 'reconnecting'; };
-</script>
-</body>
+      /* value-change flash: a ripple, of course */
+      .flash {
+        animation: pulse 0.7s ease-out;
+      }
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 var(--ring);
+        }
+        100% {
+          box-shadow: 0 0 0 12px transparent;
+        }
+      }
+
+      /* ── tooltip & table twins ────────────────────────────────────────── */
+      #tip {
+        position: fixed;
+        pointer-events: none;
+        z-index: 10;
+        display: none;
+        background: #060a0f;
+        border: 1px solid var(--baseline);
+        border-radius: 7px;
+        padding: 7px 10px;
+        font-size: 11.5px;
+        color: var(--ink-2);
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+        max-width: 240px;
+      }
+      #tip b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      details.twin {
+        margin-top: 12px;
+        border-top: 1px solid var(--grid);
+        padding-top: 8px;
+      }
+      details.twin summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 11px;
+        user-select: none;
+      }
+      details.twin table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+      }
+      details.twin th {
+        text-align: left;
+        color: var(--muted);
+        font-weight: 500;
+        padding: 3px 8px 3px 0;
+        border-bottom: 1px solid var(--grid);
+      }
+      details.twin td {
+        color: var(--ink-2);
+        padding: 3px 8px 3px 0;
+        border-bottom: 1px solid var(--grid);
+      }
+
+      footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      footer code {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: var(--ink-2);
+      }
+
+      @media (max-width: 880px) {
+        .stats {
+          grid-template-columns: 1fr 1fr;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .span2 {
+          grid-column: span 1;
+        }
+        .rings {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <svg class="rings" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="56"></circle>
+          <circle cx="60" cy="60" r="56"></circle>
+          <circle cx="60" cy="60" r="56"></circle>
+        </svg>
+        <div class="wordmark">ripply</div>
+        <div class="tagline">
+          live incremental map-reduce · <code>work_orders → tallies, no GROUP BY</code>
+        </div>
+        <div class="live" id="live">
+          <span class="live-dot"></span><span id="live-text">live</span>
+        </div>
+      </header>
+
+      <section class="stats">
+        <div class="tile hero">
+          <div class="label">Completed revenue</div>
+          <div class="value" id="stat-revenue">—</div>
+          <div class="sub">sum of <code>ripply_revenueByMonth</code> — plain SQL</div>
+        </div>
+        <div class="tile">
+          <div class="label">Work orders</div>
+          <div class="value" id="stat-orders">—</div>
+          <div class="sub">rows in the source table</div>
+        </div>
+        <div class="tile">
+          <div class="label">Ops applied</div>
+          <div class="value" id="stat-ops">—</div>
+          <div class="sub">inserts · updates · deletes</div>
+        </div>
+        <div class="tile">
+          <div class="label">Drain time</div>
+          <div class="value" id="stat-drain">—</div>
+          <div class="sub">avg <span id="stat-drain-avg">—</span> · full cascade</div>
+        </div>
+        <div class="tile">
+          <div class="label">Changelog backlog</div>
+          <div class="value" id="stat-backlog">—</div>
+          <div class="sub"><b>auto-pruned</b> after every drain</div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Orders by status</h2>
+          <div class="sub">index <code>ordersByStatus</code> · count per group</div>
+          <div class="hrows" id="chart-status"></div>
+          <details class="twin">
+            <summary>data table</summary>
+            <div id="table-status"></div>
+          </details>
+        </div>
+
+        <div class="card">
+          <h2>Revenue by technician</h2>
+          <div class="sub">
+            index <code>revenueByTech</code> · completed only · hover for jobs &amp; avg
+          </div>
+          <div class="hrows" id="chart-tech"></div>
+          <details class="twin">
+            <summary>data table</summary>
+            <div id="table-tech"></div>
+          </details>
+        </div>
+
+        <div class="card">
+          <h2>Revenue by day</h2>
+          <div class="sub">index <code>revenueByDay</code> · last 21 days with activity</div>
+          <div class="plot" id="chart-day"></div>
+          <details class="twin">
+            <summary>data table</summary>
+            <div id="table-day"></div>
+          </details>
+        </div>
+
+        <div class="card">
+          <h2>Revenue by month</h2>
+          <div class="sub">a <em>cascading</em> index — it consumes the day tally</div>
+          <div class="cascade">
+            <b>ripply_revenueByDay</b> <span class="arrow">─▸</span> <b>ripply_revenueByMonth</b> ·
+            sums of sums · max of days
+          </div>
+          <div class="months" id="chart-month"></div>
+          <details class="twin">
+            <summary>data table</summary>
+            <div id="table-month"></div>
+          </details>
+        </div>
+
+        <div class="card span2">
+          <h2>Change feed</h2>
+          <div class="sub">
+            the simulated app writing plain SQL — triggers ripple everything above
+          </div>
+          <div class="feed" id="feed"></div>
+        </div>
+      </section>
+
+      <footer>
+        Every chart on this page is read with plain SQL from real tables —
+        <code>SELECT tech, revenue, jobs FROM ripply_revenueByTech ORDER BY revenue DESC</code> —
+        maintained incrementally by <code>ripply</code> 🌊
+      </footer>
+    </div>
+
+    <div id="tip"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const money = (v) =>
+        '$' +
+        (v >= 100000
+          ? (v / 1000).toFixed(0) + 'K'
+          : v >= 10000
+            ? (v / 1000).toFixed(1) + 'K'
+            : Math.round(v).toLocaleString());
+      const num = (v) => Number(v).toLocaleString();
+
+      // ── shared tooltip ──────────────────────────────────────────────────
+      const tip = $('tip');
+      function bindTip(el, html) {
+        el.onmouseenter = () => {
+          tip.innerHTML = html();
+          tip.style.display = 'block';
+        };
+        el.onmousemove = (e) => {
+          const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 10);
+          tip.style.left = x + 'px';
+          tip.style.top = e.clientY + 14 + 'px';
+        };
+        el.onmouseleave = () => {
+          tip.style.display = 'none';
+        };
+      }
+
+      // ── change-flash helper ─────────────────────────────────────────────
+      const prev = new Map();
+      function flashIfChanged(el, key, value) {
+        if (prev.has(key) && prev.get(key) !== value) {
+          el.classList.remove('flash');
+          void el.offsetWidth; // restart animation
+          el.classList.add('flash');
+        }
+        prev.set(key, value);
+      }
+
+      // ── stat tiles ──────────────────────────────────────────────────────
+      function setStat(id, text, key) {
+        const el = $(id);
+        el.textContent = text;
+        flashIfChanged(el.parentElement, key, text);
+      }
+
+      // ── keyed horizontal bars ───────────────────────────────────────────
+      function renderBars(rootId, rows, opts) {
+        const root = $(rootId);
+        const max = Math.max(1, ...rows.map((r) => r.value));
+        const seen = new Set();
+        for (const row of rows) {
+          seen.add(row.key);
+          let el = root.querySelector(`[data-key="${row.key}"]`);
+          if (!el) {
+            el = document.createElement('div');
+            el.className = 'hrow';
+            el.dataset.key = row.key;
+            el.innerHTML =
+              '<span class="hlabel"></span><div class="htrack"><div class="hbar"></div></div><span class="hval"></span>';
+            root.appendChild(el);
+          }
+          root.appendChild(el); // keep sorted order
+          el.querySelector('.hlabel').textContent = row.label;
+          el.querySelector('.hval').innerHTML = row.valueText;
+          requestAnimationFrame(() => {
+            el.querySelector('.hbar').style.width = ((100 * row.value) / max).toFixed(2) + '%';
+          });
+          bindTip(el.querySelector('.htrack'), () => row.tip);
+          flashIfChanged(el, rootId + row.key, row.valueText);
+        }
+        for (const el of [...root.children]) {
+          if (!seen.has(el.dataset.key)) el.remove();
+        }
+      }
+
+      // ── day columns ─────────────────────────────────────────────────────
+      function renderDays(days) {
+        const root = $('chart-day');
+        const max = Math.max(1, ...days.map((d) => d.revenue));
+        const maxTick = Math.ceil(max / 100) * 100;
+        root.innerHTML = '';
+        for (const frac of [0, 0.5, 1]) {
+          const line = document.createElement('div');
+          line.className = 'gridline';
+          line.style.bottom = 18 + frac * (168 - 18 - 16) + 'px';
+          line.innerHTML = '<span>' + (frac ? money(maxTick * frac) : '0') + '</span>';
+          root.appendChild(line);
+        }
+        const cols = document.createElement('div');
+        cols.className = 'cols';
+        const maxDay = days.reduce((a, b) => (b.revenue > (a?.revenue ?? -1) ? b : a), null);
+        days.forEach((d, i) => {
+          const slot = document.createElement('div');
+          slot.className = 'colslot';
+          const col = document.createElement('div');
+          col.className = 'col';
+          slot.appendChild(col);
+          if (d === maxDay) {
+            const lbl = document.createElement('span');
+            lbl.className = 'colmax';
+            lbl.textContent = money(d.revenue);
+            slot.appendChild(lbl);
+          }
+          if (i === 0 || i === days.length - 1 || i % 5 === 0) {
+            const lbl = document.createElement('span');
+            lbl.className = 'collabel';
+            lbl.textContent = d.day.slice(5);
+            slot.appendChild(lbl);
+          }
+          bindTip(
+            slot,
+            () =>
+              `<b>${d.day}</b><br>revenue <b>${money(d.revenue)}</b> · ${num(d.jobs)} job${d.jobs === 1 ? '' : 's'}`,
+          );
+          cols.appendChild(slot);
+          requestAnimationFrame(() => {
+            col.style.height = ((100 * d.revenue) / maxTick).toFixed(2) + '%';
+          });
+        });
+        root.appendChild(cols);
+      }
+
+      // ── month meters ────────────────────────────────────────────────────
+      function renderMonths(months) {
+        const root = $('chart-month');
+        const max = Math.max(1, ...months.map((m) => m.revenue));
+        const seen = new Set();
+        for (const m of months) {
+          seen.add(m.month);
+          let el = root.querySelector(`[data-key="${m.month}"]`);
+          if (!el) {
+            el = document.createElement('div');
+            el.className = 'month';
+            el.dataset.key = m.month;
+            el.innerHTML =
+              '<span class="name"></span><div class="meter"><div></div></div><div class="figs"></div>';
+            root.appendChild(el);
+          }
+          el.querySelector('.name').textContent = m.month;
+          el.querySelector('.figs').innerHTML =
+            `<span>revenue <b>${money(m.revenue)}</b></span><span>jobs <b>${num(m.jobs)}</b></span><span>peak day <b>${money(m.peakDay)}</b></span>`;
+          requestAnimationFrame(() => {
+            el.querySelector('.meter > div').style.width =
+              ((100 * m.revenue) / max).toFixed(2) + '%';
+          });
+          bindTip(
+            el.querySelector('.meter'),
+            () => `<b>${m.month}</b><br>rolled up from the day tally`,
+          );
+          flashIfChanged(el, 'month' + m.month, m.revenue);
+        }
+        for (const el of [...root.children]) {
+          if (!seen.has(el.dataset.key)) el.remove();
+        }
+      }
+
+      // ── table twins ─────────────────────────────────────────────────────
+      function renderTable(rootId, headers, rows) {
+        $(rootId).innerHTML =
+          '<table><tr>' +
+          headers.map((h) => `<th>${h}</th>`).join('') +
+          '</tr>' +
+          rows.map((r) => '<tr>' + r.map((c) => `<td>${c}</td>`).join('') + '</tr>').join('') +
+          '</table>';
+      }
+
+      // ── feed ────────────────────────────────────────────────────────────
+      function renderFeed(ops) {
+        $('feed').innerHTML = ops.map((o) => `<div class="op ${o.kind}">${o.line}</div>`).join('');
+      }
+
+      // ── render everything ───────────────────────────────────────────────
+      function render(s) {
+        setStat('stat-revenue', money(s.stats.revenue), 'revenue');
+        setStat('stat-orders', num(s.stats.orders), 'orders');
+        setStat('stat-ops', num(s.stats.ops), 'ops');
+        setStat('stat-drain', s.stats.drainMs.toFixed(1) + 'ms', 'drain');
+        $('stat-drain-avg').textContent = s.stats.avgDrainMs.toFixed(1) + 'ms';
+        setStat('stat-backlog', num(s.stats.backlog), 'backlog');
+
+        renderBars(
+          'chart-status',
+          s.byStatus.map((r) => ({
+            key: r.status,
+            label: r.status,
+            value: r.orders,
+            valueText: num(r.orders),
+            tip: `<b>${r.status}</b> · ${num(r.orders)} order${r.orders === 1 ? '' : 's'}`,
+          })),
+        );
+        renderTable(
+          'table-status',
+          ['status', 'orders'],
+          s.byStatus.map((r) => [r.status, num(r.orders)]),
+        );
+
+        renderBars(
+          'chart-tech',
+          s.byTech.map((r) => ({
+            key: r.tech,
+            label: r.tech,
+            value: r.revenue,
+            valueText: `${money(r.revenue)} <small>· ${num(r.jobs)}j</small>`,
+            tip: `<b>${r.tech}</b><br>revenue <b>${money(r.revenue)}</b><br>${num(r.jobs)} jobs · avg <b>${money(r.avgJob ?? 0)}</b>`,
+          })),
+        );
+        renderTable(
+          'table-tech',
+          ['tech', 'revenue', 'jobs', 'avg job'],
+          s.byTech.map((r) => [r.tech, money(r.revenue), num(r.jobs), money(r.avgJob ?? 0)]),
+        );
+
+        renderDays(s.byDay);
+        renderTable(
+          'table-day',
+          ['day', 'revenue', 'jobs'],
+          [...s.byDay].reverse().map((r) => [r.day, money(r.revenue), num(r.jobs)]),
+        );
+
+        renderMonths(s.byMonth);
+        renderTable(
+          'table-month',
+          ['month', 'revenue', 'jobs', 'peak day'],
+          s.byMonth.map((r) => [r.month, money(r.revenue), num(r.jobs), money(r.peakDay)]),
+        );
+
+        renderFeed(s.ops);
+      }
+
+      // ── SSE ─────────────────────────────────────────────────────────────
+      const live = $('live');
+      const es = new EventSource('/events');
+      es.onmessage = (e) => render(JSON.parse(e.data));
+      es.onopen = () => {
+        live.classList.remove('down');
+        $('live-text').textContent = 'live';
+      };
+      es.onerror = () => {
+        live.classList.add('down');
+        $('live-text').textContent = 'reconnecting';
+      };
+    </script>
+  </body>
 </html>

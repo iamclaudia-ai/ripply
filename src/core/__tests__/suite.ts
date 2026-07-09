@@ -10,14 +10,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import type {
-  IndexDefinition,
-  PkValue,
-  Row,
-  Source,
-  Store,
-  StoreTx,
-} from '../../index';
+import type { IndexDefinition, PkValue, Row, Source, Store, StoreTx } from '../../index';
 import { createEngine } from '../../index';
 import { int, mulberry32, oracleReduce, pick } from './helpers';
 
@@ -79,9 +72,7 @@ export const INDEXES: Record<string, IndexDefinition> = {
   revenueByTech: {
     collection: 'work_orders',
     map: (wo) =>
-      wo.status === 'completed'
-        ? { techId: wo.technician_id, revenue: wo.revenue }
-        : null,
+      wo.status === 'completed' ? { techId: wo.technician_id, revenue: wo.revenue } : null,
     reduce: {
       groupBy: ['techId'],
       aggregate: {
@@ -139,10 +130,7 @@ async function reducedState(store: Store, name: string) {
   );
 }
 
-async function expectMatchesOracle(
-  backend: SuiteBackend,
-  defs: Record<string, IndexDefinition>,
-) {
+async function expectMatchesOracle(backend: SuiteBackend, defs: Record<string, IndexDefinition>) {
   const rows = await backend.snapshot();
   for (const [name, def] of Object.entries(defs)) {
     const expected = Object.fromEntries(
@@ -159,10 +147,7 @@ async function expectMatchesOracle(
 // The suite
 // ---------------------------------------------------------------------------
 
-export function runInvariantSuite(
-  backendName: string,
-  createBackend: SuiteBackendFactory,
-): void {
+export function runInvariantSuite(backendName: string, createBackend: SuiteBackendFactory): void {
   function setup(
     defs: Record<string, IndexDefinition> = INDEXES,
     options: { batchSize?: number } = {},
@@ -307,9 +292,7 @@ export function runInvariantSuite(
 
       // …and the transaction rolled back WHOLE: no partial apply, cursor unmoved
       expect(await reducedState(backend.store, 'countByStatus')).toEqual({});
-      expect(
-        await backend.store.transaction((tx) => tx.getCursor('countByStatus')),
-      ).toBeNull();
+      expect(await backend.store.transaction((tx) => tx.getCursor('countByStatus'))).toBeNull();
 
       // reprocessing after the "restart" converges with zero drift
       await engine.drain();
@@ -381,9 +364,7 @@ export function runInvariantSuite(
       });
 
       // the entries table holds exactly the row's current contribution
-      const entries = await backend.store.transaction((tx) =>
-        tx.readEntries('byTag', ['a']),
-      );
+      const entries = await backend.store.transaction((tx) => tx.readEntries('byTag', ['a']));
       expect(entries.map((e) => e.values.tag)).toEqual(['alpha', 'gamma']);
     });
 
@@ -391,8 +372,7 @@ export function runInvariantSuite(
       const flipping: IndexDefinition = {
         collection: 'work_orders',
         // same logical group, different key insertion order per row
-        map: (wo) =>
-          wo.flip ? { b: wo.b, a: wo.a, n: 1 } : { a: wo.a, b: wo.b, n: 1 },
+        map: (wo) => (wo.flip ? { b: wo.b, a: wo.a, n: 1 } : { a: wo.a, b: wo.b, n: 1 }),
         reduce: { groupBy: ['a', 'b'], aggregate: { count: { sum: 'n' } } },
       };
       const { backend, engine } = setup({ flipping });
@@ -433,9 +413,7 @@ export function runInvariantSuite(
       await backend.remove('b');
       await engine.drain();
       expect(await reducedState(backend.store, 'countByStatus')).toEqual({});
-      expect(
-        await backend.store.transaction((tx) => tx.allEntries('countByStatus')),
-      ).toEqual([]);
+      expect(await backend.store.transaction((tx) => tx.allEntries('countByStatus'))).toEqual([]);
     });
 
     test('invariant 10 — changed map rebuilds at start(); unchanged map does not', async () => {

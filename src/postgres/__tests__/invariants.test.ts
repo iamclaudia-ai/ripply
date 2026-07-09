@@ -96,8 +96,7 @@ export function postgresBackend(): SuiteBackend {
     if (typeof value === 'object') return JSON.stringify(value);
     return value;
   };
-  const placeholder = (column: string, i: number) =>
-    column === 'tags' ? `$${i}::jsonb` : `$${i}`;
+  const placeholder = (column: string, i: number) => (column === 'tags' ? `$${i}::jsonb` : `$${i}`);
 
   const insertSql = `INSERT INTO work_orders (${columns.join(', ')})
      VALUES (${columns.map((column, i) => placeholder(column, i + 1)).join(', ')})`;
@@ -111,11 +110,17 @@ export function postgresBackend(): SuiteBackend {
     store,
     insert: async (row: Row) => {
       await init;
-      await sql.unsafe(insertSql, columns.map((column) => toPg(row[column])));
+      await sql.unsafe(
+        insertSql,
+        columns.map((column) => toPg(row[column])),
+      );
     },
     update: async (row: Row) => {
       await init;
-      await sql.unsafe(updateSql, columns.map((column) => toPg(row[column])));
+      await sql.unsafe(
+        updateSql,
+        columns.map((column) => toPg(row[column])),
+      );
     },
     remove: async (id: string) => {
       await init;

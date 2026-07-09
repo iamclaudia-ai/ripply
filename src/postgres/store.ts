@@ -141,9 +141,7 @@ function projectSchema(name: string, schema: IndexSchema): TallyInfo {
   }
   for (const [column, type] of Object.entries(schema.columnTypes)) {
     if (!(column in types)) {
-      throw new RipplyError(
-        `index "${name}": columnTypes key "${column}" is not a tally column`,
-      );
+      throw new RipplyError(`index "${name}": columnTypes key "${column}" is not a tally column`);
     }
     if (!TYPE_STRING.test(type)) {
       throw new RipplyError(
@@ -416,9 +414,7 @@ class PostgresStoreTx implements StoreTx {
 
   async deleteReduced(index: string, groupKey: string): Promise<void> {
     const info = this.tally(index);
-    await this.sql.unsafe(`DELETE FROM ${ident(info.table)} WHERE group_key = $1`, [
-      groupKey,
-    ]);
+    await this.sql.unsafe(`DELETE FROM ${ident(info.table)} WHERE group_key = $1`, [groupKey]);
   }
 
   async allReduced(index: string): Promise<ReducedRow[]> {
@@ -439,10 +435,9 @@ class PostgresStoreTx implements StoreTx {
   // -------------------------------------------------------------- cursors/meta
 
   async getCursor(index: string): Promise<Cursor> {
-    const records = (await this.sql.unsafe(
-      `SELECT cursor FROM _ripply_indexes WHERE idx = $1`,
-      [index],
-    )) as Array<{ cursor: string | null }>;
+    const records = (await this.sql.unsafe(`SELECT cursor FROM _ripply_indexes WHERE idx = $1`, [
+      index,
+    ])) as Array<{ cursor: string | null }>;
     const cursor = records[0]?.cursor;
     return cursor == null ? null : (JSON.parse(cursor) as Cursor);
   }

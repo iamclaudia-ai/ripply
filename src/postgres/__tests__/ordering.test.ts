@@ -48,9 +48,7 @@ async function reducedState(store: Store, name: string) {
 
 async function setup(defs: Record<string, IndexDefinition>) {
   await resetSchema(sql);
-  await sql.unsafe(
-    `CREATE TABLE games (id TEXT PRIMARY KEY, status TEXT, score INTEGER)`,
-  );
+  await sql.unsafe(`CREATE TABLE games (id TEXT PRIMARY KEY, status TEXT, score INTEGER)`);
   const source = postgresSource({ sql, collections: { games: { pk: ['id'] } } });
   const store = postgresStore({ sql });
   const engine = createEngine({ source, store, batchSize: 7 });
@@ -101,9 +99,9 @@ test('invariant 9 — deterministic: an early-seq, late-commit transaction is ne
   const cursor = await store.transaction((tx) => tx.getCursor('countByStatus'));
   const pruned = await source.prune('games', [cursor]);
   expect(pruned).toBe(2);
-  const left = (await sql.unsafe(
-    `SELECT count(*)::int AS n FROM _ripply_changelog`,
-  )) as Array<{ n: number }>;
+  const left = (await sql.unsafe(`SELECT count(*)::int AS n FROM _ripply_changelog`)) as Array<{
+    n: number;
+  }>;
   expect(left[0]!.n).toBe(0);
 });
 
@@ -153,10 +151,7 @@ test('invariant 9 — stress: 8 concurrent out-of-order committers + live draine
   ).map((row) => ({ pk: [row.id as string | number | boolean | null], row }));
   for (const [name, def] of Object.entries({ countByStatus, statsByStatus })) {
     const expected = Object.fromEntries(
-      [...oracleReduce(rows, def).entries()].map(([groupKey, group]) => [
-        groupKey,
-        group.values,
-      ]),
+      [...oracleReduce(rows, def).entries()].map(([groupKey, group]) => [groupKey, group.values]),
     );
     expect(await reducedState(store, name)).toEqual(expected);
     expect(await engine.verify(name)).toMatchObject({ ok: true });
@@ -168,8 +163,8 @@ test('invariant 9 — stress: 8 concurrent out-of-order committers + live draine
     await tx.getCursor('statsByStatus'),
   ]);
   await source.prune('games', cursors);
-  const left = (await sql.unsafe(
-    `SELECT count(*)::int AS n FROM _ripply_changelog`,
-  )) as Array<{ n: number }>;
+  const left = (await sql.unsafe(`SELECT count(*)::int AS n FROM _ripply_changelog`)) as Array<{
+    n: number;
+  }>;
   expect(left[0]!.n).toBe(0);
 });

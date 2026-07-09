@@ -2,18 +2,29 @@
   "name": "ripply",
   "version": "0.0.3",
   "description": "Real-time incremental map-reduce indexes for SQLite and Postgres — RavenDB-style pre-computed aggregates as a tiny standalone library",
+  "keywords": [
+    "aggregates",
+    "cdc",
+    "incremental",
+    "indexes",
+    "map-reduce",
+    "materialized-view",
+    "postgres",
+    "ravendb",
+    "sqlite"
+  ],
   "license": "MIT",
   "author": "Michael & Claudia",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/iamclaudia-ai/ripply.git"
   },
-  "type": "module",
-  "sideEffects": false,
   "files": [
     "src",
     "docs"
   ],
+  "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./memory": "./src/memory/index.ts",
@@ -22,21 +33,15 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "format": "oxfmt --ignore-path .oxfmtignore",
+    "format:check": "oxfmt --check --ignore-path .oxfmtignore"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5"
-  },
-  "keywords": [
-    "map-reduce",
-    "incremental",
-    "materialized-view",
-    "aggregates",
-    "sqlite",
-    "postgres",
-    "cdc",
-    "ravendb",
-    "indexes"
-  ]
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0",
+    "typescript": "^7"
+  }
 }

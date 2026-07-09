@@ -14,13 +14,5 @@
  * ```
  */
 
-export {
-  PostgresSource,
-  postgresSource,
-  type PostgresSourceOptions,
-} from './source';
-export {
-  PostgresStore,
-  postgresStore,
-  type PostgresStoreOptions,
-} from './store';
+export { PostgresSource, postgresSource, type PostgresSourceOptions } from './source';
+export { PostgresStore, postgresStore, type PostgresStoreOptions } from './store';

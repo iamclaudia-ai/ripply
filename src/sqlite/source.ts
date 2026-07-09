@@ -20,15 +20,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { RipplyError } from '../core/errors';
-import type {
-  Change,
-  ChangeBatch,
-  Cursor,
-  PkValue,
-  Row,
-  Scalar,
-  Source,
-} from '../core/types';
+import type { Change, ChangeBatch, Cursor, PkValue, Row, Scalar, Source } from '../core/types';
 
 export interface SqliteSourceOptions {
   db: Database;
@@ -141,16 +133,19 @@ export class SqliteSource implements Source {
     const config = this.mustCollection(collection);
     const rows = this.db.query(`SELECT * FROM ${ident(collection)}`).all() as Row[];
     for (const row of rows) {
-      await onRow(config.pk.map((column) => row[column] as Scalar), row);
+      await onRow(
+        config.pk.map((column) => row[column] as Scalar),
+        row,
+      );
     }
   }
 
   async currentCursor(collection: string): Promise<Cursor> {
     this.mustCollection(collection);
     this.ensureChangelog();
-    const row = this.db
-      .query(`SELECT MAX(seq) AS seq FROM _ripply_changelog`)
-      .get() as { seq: number | null };
+    const row = this.db.query(`SELECT MAX(seq) AS seq FROM _ripply_changelog`).get() as {
+      seq: number | null;
+    };
     return row.seq ?? null;
   }
 
