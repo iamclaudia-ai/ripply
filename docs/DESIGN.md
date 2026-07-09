@@ -193,33 +193,51 @@ column enumeration):
 
 ```sql
 CREATE FUNCTION _ripply_capture() RETURNS trigger AS $$
+DECLARE
+  rec jsonb; pk jsonb := '[]'::jsonb; col text;
 BEGIN
+  rec := CASE WHEN TG_OP='DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  FOREACH col IN ARRAY TG_ARGV LOOP        -- pk columns from install()
+    pk := pk || jsonb_build_array(rec -> col);
+  END LOOP;
   INSERT INTO _ripply_changelog(collection, pk, op, after)
-  VALUES (TG_ARGV[0],
-          jsonb_build_array(NEW.id),          -- pk expression from install()
-          lower(TG_OP),
-          CASE WHEN TG_OP='DELETE' THEN NULL ELSE to_jsonb(NEW) END);
-  PERFORM pg_notify('_ripply', TG_ARGV[0]);    -- low-latency wakeup
+  VALUES (TG_TABLE_NAME, pk, lower(TG_OP),
+          CASE WHEN TG_OP='DELETE' THEN NULL ELSE rec END);
+  PERFORM pg_notify('_ripply', TG_TABLE_NAME);  -- low-latency wakeup
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
 ```
 
 The change is captured in the **same transaction** as the write → no gap, no
-slot. Wakeup via `LISTEN _ripply`.
+slot. The changelog also stores `txid xid8 DEFAULT pg_current_xact_id()` —
+see below. (Wakeups via `LISTEN _ripply` are future work: poolers like
+Neon's don't carry LISTEN reliably, so the poll fallback is the default.)
 
-**Ordering gotcha (must handle):** `BIGSERIAL`/identity values can be assigned
-out of *commit* order under concurrency (a lower seq may commit after a higher
-one), so a naive high-water cursor can skip a change. Two mitigations:
+**Ordering gotcha (SOLVED — snapshot-windowed cursors):**
+`BIGSERIAL`/identity values are assigned at INSERT time but transactions
+commit in any order (a lower seq may commit after a higher one), so a naive
+high-water `seq > cursor` poll can observe seq 5 and advance past a
+still-in-flight seq 3, skipping it permanently. The shipped solution keeps
+the shared read-only changelog AND per-index cursors (so multiple indexes
+fan out over one outbox) by making the cursor a JSON string of
+`pg_snapshot` values, `{ prev, cur, seq }`:
 
-- **Single-index / single-collection drain: consume-and-delete.** `DELETE FROM
-  _ripply_changelog WHERE collection=$1 ORDER BY seq LIMIT n RETURNING *` inside
-  the processor tx. A change is only visible once its inserting txn commits; we
-  consume what we can see and delete it, so a late-committing lower seq is simply
-  picked up on the next drain — nothing is skipped.
-- **Multiple indexes on one collection:** they share the changelog and can't
-  each delete it. Use a per-collection drain worker that fans out to all indexes
-  and deletes a change only after **every** index has applied it (prune below the
-  min per-index cursor). Per-index cursors still exist for rebuild/add-index.
+- a poll freezes a **window**: rows `pg_visible_in_snapshot(txid, cur)` and
+  NOT visible in `prev` — an immutable set, because snapshots are immutable;
+- the window drains in `seq` order (`seq` tracks progress within it; per-row
+  effect order == seq order because row locks serialize writers per row);
+- when exhausted, `prev ← cur` and a fresh `cur` opens.
+
+A transaction that grabbed a small seq but committed late is not *visible*
+in the frozen window — it lands in a **later window** instead of being
+skipped. Late commits are unlosable by construction (invariant 9, proven by
+a deterministic held-transaction test plus a concurrent-writers stress
+test). `prune()` deletes a change once every index's cursor covers it:
+visible in its `prev`, or inside its frozen window at `seq <=` its seq.
+
+(Alternatives considered: consume-and-delete inside the processor tx —
+breaks multi-index sharing; a separate per-collection drain worker — more
+moving parts. The windowed cursor needs neither.)
 
 ### Postgres — logical decoding CDC (opt-in)
 
@@ -242,7 +260,7 @@ or decoupling. The Engine and Store don't change between them — only which
 | Source | Store location | Guarantee | How |
 |---|---|---|---|
 | SQLite triggers | same file | Exactly-once | Drain + apply + cursor in one tx |
-| PG trigger-outbox | same DB | Exactly-once | One tx per batch (consume-and-delete) |
+| PG trigger-outbox | same DB | Exactly-once | Apply + cursor in one tx; snapshot-windowed poll |
 | PG CDC | same DB | Effectively-once | Apply + LSN cursor in one tx; dedupe by LSN |
 | PG CDC | different DB | At-least-once, idempotent | Reconcile-from-entries makes re-apply a no-op |
 
@@ -398,7 +416,8 @@ against each real adapter:
    group.
 8. **Delete retraction:** deleting a source row removes its contributions.
 9. **Out-of-order commit (PG):** concurrent transactions with interleaved commit
-   order still converge (exercises the consume-and-delete drain).
+   order still converge (exercises the snapshot-windowed cursor; proven by a
+   deterministic held-transaction test and a concurrent-writers stress test).
 10. **Map versioning:** a changed map triggers rebuild; a stale index is never
     served as fresh.
 

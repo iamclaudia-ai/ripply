@@ -52,9 +52,14 @@ this package via a thin adapter on its side.
 
 ## Current status
 
-Phase 0 (engine + in-memory reference + invariant tests) — **not started**.
-See `PLAN.md` for the phase checklist and `docs/DESIGN.md` §8 for the ten
-correctness invariants the tests must codify.
+Phases 0–2 **complete**: engine + in-memory reference, SQLite adapter,
+Postgres adapter (trigger-outbox with **snapshot-windowed cursors** — see
+DESIGN.md §3 for why a naive seq cursor silently skips out-of-order commits
+on Postgres). 60 tests green across the three-backend adapter matrix;
+invariant 9 proven deterministically. Postgres tests need a reachable PG
+(`postgres://postgres:postgres@localhost:5432` by default, or set
+`RIPPLY_TEST_PG`). Next: Phase 3 (CDC opt-in) / Phase 4 (ergonomics) per
+`PLAN.md`.
 
 ## Conventions
 

@@ -104,6 +104,21 @@ export class Engine {
         }
       }
     }
+    // columnTypes may also target avg component columns (<out>_sum/<out>_count)
+    const typedColumns = new Set(columns);
+    for (const { out, fn } of aggregates) {
+      if (fn === 'avg') {
+        typedColumns.add(`${out}_sum`);
+        typedColumns.add(`${out}_count`);
+      }
+    }
+    for (const column of Object.keys(def.columnTypes ?? {})) {
+      if (!typedColumns.has(column)) {
+        throw new RipplyError(
+          `index "${name}": columnTypes key "${column}" is not a tally column`,
+        );
+      }
+    }
 
     this.indexes.set(name, {
       name,
@@ -187,6 +202,7 @@ export class Engine {
         groupBy: [...runtime.def.reduce.groupBy],
         aggregates: runtime.aggregates.map(({ out, fn }) => ({ out, fn })),
         sqlIndexes: (runtime.def.indexes ?? []).map((columns) => [...columns]),
+        columnTypes: { ...(runtime.def.columnTypes ?? {}) },
       });
     }
     this.ensuredStorage.add(name);

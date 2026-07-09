@@ -68,6 +68,8 @@ export interface TypedIndexDefinition<
   };
   /** SQL indexes on the materialized tally table (groupBy/aggregate columns). */
   indexes?: Array<Array<Extract<keyof TEntry, string> | NoInfer<TAgg>>>;
+  /** SQL column-type overrides for the tally table (see IndexDefinition). */
+  columnTypes?: Record<string, string>;
 }
 
 /** @internal What the query surface needs from Ripply. */

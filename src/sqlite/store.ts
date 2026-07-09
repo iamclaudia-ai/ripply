@@ -71,6 +71,19 @@ interface TallyInfo {
   columns: string[];
 }
 
+/** Column-type strings go into DDL verbatim — keep them boring. */
+const TYPE_STRING = /^[A-Za-z_][A-Za-z0-9_ ]*(\(\s*\d+(\s*,\s*\d+)?\s*\))?$/;
+
+function columnType(name: string, column: string, type: string | undefined): string {
+  if (type === undefined) return '';
+  if (!TYPE_STRING.test(type)) {
+    throw new RipplyError(
+      `index "${name}": invalid column type "${type}" for tally column "${column}"`,
+    );
+  }
+  return ` ${type}`;
+}
+
 function projectSchema(name: string, schema: IndexSchema): TallyInfo {
   const aggregates: ProjectedAggregate[] = schema.aggregates.map(({ out, fn }) => ({
     out,
@@ -156,7 +169,8 @@ export class SqliteStore implements Store {
           if (column === 'group_key') return `"group_key" TEXT PRIMARY KEY`;
           if (column === 'entry_count') return `"entry_count" INTEGER NOT NULL`;
           if (column === 'vals') return `"vals" TEXT NOT NULL`;
-          return ident(column);
+          // declared columnTypes become type affinities (SQLite is dynamic)
+          return `${ident(column)}${columnType(name, column, schema.columnTypes[column])}`;
         })
         .join(', ');
       this.db.exec(`CREATE TABLE ${table} (${columnDefs})`);

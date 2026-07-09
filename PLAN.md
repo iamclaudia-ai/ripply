@@ -83,11 +83,36 @@ the real types with full inference.
 
 ## Phase 2 — Postgres trigger-outbox
 
-- [ ] Generic `_ripply_capture()` trigger fn (`to_jsonb(NEW)`), `pg_notify` wakeup
-- [ ] Consume-and-delete drain; multi-index fan-out with prune-below-min-cursor
-- [ ] Invariant 9 (out-of-order commit convergence) — needs a real PG in CI
-      (testcontainers or a local instance)
-- [ ] Adapter matrix: full invariant suite on PG
+- [x] `postgresSource`: ONE generic `_ripply_capture()` trigger fn
+      (`to_jsonb(NEW/OLD)`, pk columns via TG_ARGV, `pg_notify` for future
+      wakeups), `_ripply_changelog` outbox with `txid xid8` — zero deps via
+      Bun's native `Bun.sql`
+- [x] **Ordering gotcha solved: snapshot-windowed cursors.** Cursor =
+      `{prev, cur, seq}` of `pg_snapshot`s; a poll freezes a window
+      (visible in `cur`, not in `prev`), drains it in seq order, then
+      advances. A late-committing low seq lands in a later window instead
+      of being skipped. Keeps the shared read-only changelog + per-index
+      cursors + `prune()` (covers-based) — no consume-and-delete needed.
+      (Found the hard way: `ORDER BY seq` binding to a `seq::text` output
+      alias sorts lexicographically — the stress test caught it.)
+- [x] `postgresStore`: `sql.begin` transactions, TYPED materialized
+      `ripply_<name>` tally tables (`columnTypes` overrides, numeric
+      defaults double precision — Bun returns int8 as string), upsert
+      putReduced preserving cascade trigger capture, `::text::jsonb`
+      params (Bun double-encodes pre-stringified jsonb)
+- [x] `scan()` = server-side `to_jsonb(t)` so rebuild rows are
+      byte-identical to trigger after-images (else phantom groups)
+- [x] Invariant 9 (out-of-order commit convergence): deterministic
+      held-transaction test + 8-writer concurrent stress with live drainer,
+      vs the independent oracle
+- [x] Adapter matrix: full invariant suite on PG (`src/postgres/__tests__/`,
+      local Docker PG; `RIPPLY_TEST_PG` to point elsewhere)
+- [x] Cascading indexes + tally tests on PG (day→month, NutWords-shaped
+      player_stats with bigint group key)
+
+**Phase 2 complete — 60 tests green across memory + SQLite + Postgres. ✅**
+Deferred: `wakeups` via LISTEN/NOTIFY (needs a dedicated unpooled
+connection; Neon's pooler drops LISTEN — poll fallback is the default).
 
 ## Phase 3 — Postgres CDC (opt-in)
 

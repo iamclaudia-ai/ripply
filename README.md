@@ -81,20 +81,28 @@ exactly-once and transactional.
 
 ## Status
 
-🚧 Early development, moving fast. **Phases 0 and 1 complete:**
+🚧 Early development, moving fast. **Phases 0, 1, and 2 complete:**
 
 - Backend-free engine proven by property-based invariant tests (incremental
   result == full rebuild over random op sequences), idempotent replay,
   crash-safety, and map-versioning tests
 - **SQLite adapter** — generated trigger capture, transactional store,
-  materialized tally tables, cascading indexes; the identical invariant
-  suite runs against both the in-memory reference and real SQLite (41 green)
+  materialized tally tables, cascading indexes
+- **Postgres adapter** — one generic trigger-outbox capture function, typed
+  materialized tally tables (`columnTypes` overrides), and
+  **snapshot-windowed cursors**: polling that provably never skips a
+  transaction that commits out of BIGSERIAL order (a held-transaction test
+  and a concurrent-writers stress test enforce it). Zero dependencies —
+  built on Bun's native `Bun.sql`. Works great on hosted Postgres (Neon):
+  no replication slots, no WAL retention, survives connection pooling.
+- The **identical invariant suite** runs against the in-memory reference,
+  real SQLite, and real Postgres — 60 tests green
 - **Verified against RavenDB itself**: a production RavenDB map-reduce index
   ported to Ripply over 452 live documents produced exactly matching reduce
   groups (`scripts/ravendb-oracle.ts`)
 
-**Next: Postgres** (trigger-outbox, then opt-in logical-decoding CDC). See
-`PLAN.md`.
+**Next: ergonomics** (compiled build, drill-down polish) and opt-in
+logical-decoding CDC. See `PLAN.md`.
 
 ⚠️ Published as TypeScript source (Bun-first) while pre-1.0; a compiled build
 lands with the ergonomics phase.

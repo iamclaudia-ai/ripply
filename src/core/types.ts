@@ -79,6 +79,15 @@ export interface IndexDefinition<TRow extends Row = Row, TEntry extends Entry = 
    * without materialized tables ignore this.
    */
   indexes?: string[][];
+  /**
+   * Optional SQL column types for the materialized tally table, keyed by
+   * tally column: a groupBy field, an aggregate output, or an avg component
+   * (`<out>_sum` / `<out>_count`). Typed adapters (Postgres) default groupBy
+   * and `first`/`last` outputs to `text` and numeric aggregates to numeric
+   * types — override here when you know better (`{ player_id: 'bigint' }`).
+   * Dynamically-typed adapters (SQLite) use these as type affinities.
+   */
+  columnTypes?: Record<string, string>;
 }
 
 /**
@@ -90,6 +99,8 @@ export interface IndexSchema {
   groupBy: string[];
   aggregates: Array<{ out: string; fn: AggregateFn }>;
   sqlIndexes: string[][];
+  /** Declared column-type overrides (validated by the engine). */
+  columnTypes: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
