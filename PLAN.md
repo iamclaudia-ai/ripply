@@ -68,6 +68,13 @@ the real types with full inference.
       `HotelRoom/TaskCompletionsByTechDate` from a live RavenDB 3.x db,
       452 real docs → exact group match across 4 hotels. Initial build 19ms,
       incremental 8ms.
+- [x] **Materialized tally tables** (pulled forward from Phase 4): reduced
+      output is a real `ripply_<name>` table with groupBy/aggregate columns,
+      plain-SQL queryable, `indexes: [...]` declares SQL indexes, avg gets
+      `_sum`/`_count` component columns (DESIGN.md §6.5)
+- [x] **Cascading indexes** (RavenDB 4 OutputReduceToCollection): an index
+      may consume another index's tally table; topo-ordered start, cycle
+      detection, one drain settles the whole cascade
 - [ ] Example app (`examples/work-orders/`)
 
 **Ship it usable after this phase.**

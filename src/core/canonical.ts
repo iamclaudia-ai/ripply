@@ -47,3 +47,13 @@ export function groupOfKey(groupKey: string): Record<string, unknown> {
 export function pkKeyOf(pk: PkValue): string {
   return JSON.stringify(pk);
 }
+
+/**
+ * The collection name under which an index's materialized tally table is
+ * visible — a UNIVERSAL convention so cascading indexes (an index reading
+ * another index's output, RavenDB's OutputReduceToCollection) can be
+ * declared backend-agnostically and cycle-checked by the engine.
+ */
+export function tallyTableOf(indexName: string): string {
+  return `ripply_${indexName}`;
+}

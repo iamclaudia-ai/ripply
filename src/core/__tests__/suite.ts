@@ -277,6 +277,7 @@ export function runInvariantSuite(
 
       let crashesLeft = 1;
       const crashingStore: Store = {
+        ensureIndex: backend.store.ensureIndex?.bind(backend.store),
         transaction: (fn) =>
           backend.store.transaction((tx) => {
             const wrapped = new Proxy(tx, {

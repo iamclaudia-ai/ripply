@@ -73,6 +73,23 @@ export interface IndexDefinition<TRow extends Row = Row, TEntry extends Entry = 
   collection: string;
   map: MapFn<TRow, TEntry>;
   reduce: ReduceSpec;
+  /**
+   * Optional SQL indexes on the materialized tally table, each an array of
+   * tally columns (groupBy fields and/or aggregate outputs). Adapters
+   * without materialized tables ignore this.
+   */
+  indexes?: string[][];
+}
+
+/**
+ * The physical shape of an index's reduced output, handed to
+ * `Store.ensureIndex` so SQL stores can materialize a real, queryable
+ * tally table.
+ */
+export interface IndexSchema {
+  groupBy: string[];
+  aggregates: Array<{ out: string; fn: AggregateFn }>;
+  sqlIndexes: string[][];
 }
 
 // ---------------------------------------------------------------------------
@@ -211,4 +228,15 @@ export interface StoreTx {
 export interface Store {
   /** Run `fn` atomically: all writes commit together or roll back together. */
   transaction<T>(fn: (tx: StoreTx) => Promise<T>): Promise<T>;
+
+  /**
+   * Optional: prepare physical storage for an index before any reads or
+   * writes. SQL stores use this to materialize the reduced output as a
+   * REAL table (`ripply_<name>`) with the groupBy fields and aggregate
+   * outputs as columns — queryable by any SQL client with no Ripply code,
+   * and a valid `Source` collection for cascading indexes. Must be
+   * idempotent; a shape change may drop and recreate (the map-version
+   * rebuild repopulates it).
+   */
+  ensureIndex?(name: string, schema: IndexSchema): Promise<void>;
 }

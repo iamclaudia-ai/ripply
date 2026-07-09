@@ -22,6 +22,7 @@ import {
   toStoredEntries,
   type ParsedAggregate,
 } from './aggregates';
+import { tallyTableOf } from './canonical';
 import { RipplyError } from './errors';
 import { rebuildIndex, verifyIndex, type VerifyResult } from './rebuild';
 import type {
@@ -56,6 +57,7 @@ export class Engine {
   readonly store: Store;
   private readonly batchSize: number;
   private readonly indexes = new Map<string, IndexRuntime>();
+  private readonly ensuredStorage = new Set<string>();
 
   constructor(options: CreateEngineOptions) {
     this.source = options.source;
@@ -75,6 +77,34 @@ export class Engine {
       throw new RipplyError(`index "${name}": map must be a function`);
     }
     const aggregates = parseReduceSpec(def.reduce);
+
+    // The reduced output doubles as a real table (groupBy fields and
+    // aggregate outputs become columns) — reject shapes that can't.
+    const RESERVED = new Set(['group_key', 'entry_count', 'vals']);
+    const columns = new Set(def.reduce.groupBy);
+    for (const { out } of aggregates) {
+      if (columns.has(out)) {
+        throw new RipplyError(
+          `index "${name}": aggregate "${out}" collides with a groupBy field`,
+        );
+      }
+      columns.add(out);
+    }
+    for (const column of columns) {
+      if (RESERVED.has(column)) {
+        throw new RipplyError(`index "${name}": "${column}" is a reserved column name`);
+      }
+    }
+    for (const sqlIndex of def.indexes ?? []) {
+      for (const column of sqlIndex) {
+        if (!columns.has(column)) {
+          throw new RipplyError(
+            `index "${name}": SQL index column "${column}" is not a groupBy field or aggregate output`,
+          );
+        }
+      }
+    }
+
     this.indexes.set(name, {
       name,
       def,
@@ -98,18 +128,68 @@ export class Engine {
   /**
    * Install change capture and bring every index up to date with its
    * definition: a missing or mismatched map version triggers a (re)build —
-   * a stale index is never served as fresh (invariant 10).
+   * a stale index is never served as fresh (invariant 10). Indexes are
+   * handled in cascade (topological) order — upstream tally tables exist
+   * and are fresh before a downstream index scans them.
    */
   async start(): Promise<void> {
-    const collections = new Set(
-      [...this.indexes.values()].map((ix) => ix.def.collection),
-    );
+    const order = this.cascadeOrder();
+    for (const name of order) {
+      // materialize BEFORE install: a downstream index installs capture on
+      // an upstream tally table, which must exist first
+      await this.ensureStorage(name);
+    }
+    const collections = new Set(order.map((name) => this.runtimeOf(name).def.collection));
     for (const collection of collections) {
       await this.source.install(collection);
     }
-    for (const name of this.indexes.keys()) {
+    for (const name of order) {
       await this.ensureFresh(name);
     }
+  }
+
+  /**
+   * Indexes in dependency order: an index whose collection is another
+   * index's tally table (`ripply_<name>`, see `tallyTableOf`) processes
+   * after its upstream. Throws on cycles — a cascade loop would otherwise
+   * drain forever.
+   */
+  cascadeOrder(): string[] {
+    const byTallyTable = new Map<string, string>();
+    for (const name of this.indexes.keys()) byTallyTable.set(tallyTableOf(name), name);
+
+    const order: string[] = [];
+    const state = new Map<string, 'visiting' | 'done'>();
+    const visit = (name: string, path: string[]): void => {
+      const mark = state.get(name);
+      if (mark === 'visiting') {
+        throw new RipplyError(
+          `cascading index cycle: ${[...path, name].join(' → ')}`,
+        );
+      }
+      if (mark === 'done') return;
+      state.set(name, 'visiting');
+      const upstream = byTallyTable.get(this.runtimeOf(name).def.collection);
+      if (upstream) visit(upstream, [...path, name]);
+      state.set(name, 'done');
+      order.push(name);
+    };
+    for (const name of this.indexes.keys()) visit(name, []);
+    return order;
+  }
+
+  /** Prepare physical storage (materialized tally table) exactly once. */
+  async ensureStorage(name: string): Promise<void> {
+    if (this.ensuredStorage.has(name)) return;
+    const runtime = this.runtimeOf(name);
+    if (this.store.ensureIndex) {
+      await this.store.ensureIndex(name, {
+        groupBy: [...runtime.def.reduce.groupBy],
+        aggregates: runtime.aggregates.map(({ out, fn }) => ({ out, fn })),
+        sqlIndexes: (runtime.def.indexes ?? []).map((columns) => [...columns]),
+      });
+    }
+    this.ensuredStorage.add(name);
   }
 
   /** Rebuild iff the stored map version differs from the definition's. */
@@ -127,6 +207,7 @@ export class Engine {
    */
   async process(name: string): Promise<number> {
     const runtime = this.runtimeOf(name);
+    await this.ensureStorage(name);
     return this.store.transaction(async (tx) => {
       const cursor = await tx.getCursor(name);
       const batch = await this.source.poll(
@@ -151,7 +232,9 @@ export class Engine {
 
   /** Process until every index (or one named index) is fully caught up. */
   async drain(name?: string): Promise<number> {
-    const names = name ? [name] : [...this.indexes.keys()];
+    // cascade order lets a day→month chain settle in fewer rounds; the
+    // until-quiet loop guarantees convergence regardless
+    const names = name ? [name] : this.cascadeOrder();
     let total = 0;
     for (;;) {
       let round = 0;
@@ -165,11 +248,13 @@ export class Engine {
 
   /** Truncate + full scan + resume (DESIGN.md §7). */
   async rebuild(name: string): Promise<void> {
+    await this.ensureStorage(name);
     return rebuildIndex(this, name);
   }
 
   /** From-scratch reduce vs. the maintained index (dev/CI assertion). */
   async verify(name: string): Promise<VerifyResult> {
+    await this.ensureStorage(name);
     return verifyIndex(this, name);
   }
 

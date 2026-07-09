@@ -325,6 +325,47 @@ TypeScript generics carry `map`'s return type through to `.value()`/`.entries()`
 
 ---
 
+## 6.5 Materialized tally tables & cascading indexes
+
+*(Added during Phase 1 — pulled forward from the ergonomics phase.)*
+
+In SQL stores, an index's reduced output **is a real table**, `ripply_<name>`,
+with the groupBy fields and aggregate outputs as plain columns:
+
+```sql
+SELECT TaskType, Count FROM ripply_TaskCompletionsByTechDate
+WHERE HotelId = 'hotels/32546' ORDER BY TaskCompletedDate DESC;
+```
+
+- Any SQL client reads it with zero Ripply code — the app doesn't need to
+  know how the tally is maintained.
+- `IndexDefinition.indexes: string[][]` declares ordinary SQL indexes on it.
+- Projection rules: `avg` → derived column **plus** `<out>_sum`/`<out>_count`
+  components (so downstream rollups stay exact); `distinct` → JSON array
+  text; objects/arrays → JSON text; scalars as-is.
+- `group_key` (canonical JSON) stays the primary key, and an internal `vals`
+  column is the reconstruction source of truth; projected columns are a
+  denormalization maintained in the same transaction.
+- `Store.ensureIndex(name, schema)` (optional interface method) materializes
+  the table; a shape change drops + recreates it and the map-version rebuild
+  repopulates. Non-SQL stores ignore all of this.
+
+**Cascading indexes (RavenDB 4's OutputReduceToCollection):** because the
+tally is a real table, Ripply's own trigger capture works on it — a second
+index may declare `collection: 'ripply_<upstream>'` and roll it up further
+(day → month → year), incremental all the way down. The engine writes the
+upstream tally inside its own Store transaction, so the triggers fire in
+that same transaction and the downstream changelog entries appear
+atomically. `drain()` processes indexes in cascade (topological) order and
+loops until quiet, so a whole cascade settles in one drain; cycles are
+rejected at `start()`.
+
+Cascade soundness: `sum` of sums, `min` of mins, `max` of maxes ✓; a
+downstream "count" must be a **sum** of upstream counts; `avg` cascades via
+its `_sum`/`_count` component columns; `first`/`last` don't cascade.
+
+---
+
 ## 7. Rebuild & Versioning
 
 - **Map versioning:** hash the map function source; store it with the index

@@ -9,7 +9,13 @@
 
 export * from './core/types';
 export { RipplyError } from './core/errors';
-export { canonicalJson, groupKeyOf, groupOfKey, pkKeyOf } from './core/canonical';
+export {
+  canonicalJson,
+  groupKeyOf,
+  groupOfKey,
+  pkKeyOf,
+  tallyTableOf,
+} from './core/canonical';
 export {
   parseReduceSpec,
   isLinear,

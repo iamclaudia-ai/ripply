@@ -66,12 +66,14 @@ export interface TypedIndexDefinition<
     groupBy: Array<Extract<keyof TEntry, string>>;
     aggregate: Record<TAgg, AggregateSpec>;
   };
+  /** SQL indexes on the materialized tally table (groupBy/aggregate columns). */
+  indexes?: Array<Array<Extract<keyof TEntry, string> | NoInfer<TAgg>>>;
 }
 
 /** @internal What the query surface needs from Ripply. */
 interface HandleContext {
   runtimeOf(name: string): IndexRuntime;
-  withTx<T>(fn: (tx: StoreTx) => Promise<T>): Promise<T>;
+  withTx<T>(name: string, fn: (tx: StoreTx) => Promise<T>): Promise<T>;
 }
 
 export class Ripply {
@@ -90,7 +92,11 @@ export class Ripply {
 
   private readonly context: HandleContext = {
     runtimeOf: (name) => this.engine.runtimeOf(name),
-    withTx: (fn) => this.runExclusive(() => this.store.transaction(fn)),
+    withTx: (name, fn) =>
+      this.runExclusive(async () => {
+        await this.engine.ensureStorage(name);
+        return this.store.transaction(fn);
+      }),
   };
 
   constructor(options: CreateRipplyOptions) {
@@ -264,14 +270,18 @@ export class IndexQuery<TEntry extends Entry = Entry, TAgg extends string = stri
 
   /** Drill-down: the stored entries behind the matching groups, with pks. */
   async entries(): Promise<Array<{ pk: PkValue; entry: TEntry }>> {
-    const entries = await this.context.withTx((tx) => tx.allEntries(this.name));
+    const entries = await this.context.withTx(this.name, (tx) =>
+      tx.allEntries(this.name),
+    );
     return entries
       .filter((entry) => this.matches((key) => entry.values[key]))
       .map((entry) => ({ pk: entry.pk, entry: entry.values as TEntry }));
   }
 
   private async matchedRows(): Promise<ReducedRow[]> {
-    const rows = await this.context.withTx((tx) => tx.allReduced(this.name));
+    const rows = await this.context.withTx(this.name, (tx) =>
+      tx.allReduced(this.name),
+    );
     return rows.filter((row) => this.matches((key) => row.group[key]));
   }
 
