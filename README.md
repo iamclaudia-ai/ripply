@@ -6,8 +6,9 @@ Pre-computed, always-fresh aggregates — counts by status, revenue by month,
 workload by assignee — maintained incrementally as your rows change. Inserts,
 updates, **and deletes**. Query time is a key lookup, never a `GROUP BY` scan.
 
-Inspired by RavenDB's map-reduce indexes; built as a small standalone
-TypeScript library for Bun/Node. No framework, no server, no lock-in.
+Inspired by RavenDB's map-reduce indexes ([how we compare](docs/VS-RAVENDB.md));
+built as a small standalone TypeScript library for Bun/Node. No framework, no
+server, no lock-in.
 
 ```ts
 import { createRipply } from "ripply";

@@ -114,19 +114,39 @@ the real types with full inference.
 Deferred: `wakeups` via LISTEN/NOTIFY (needs a dedicated unpooled
 connection; Neon's pooler drops LISTEN — poll fallback is the default).
 
-## Phase 3 — Postgres CDC (opt-in)
+## Phase 3 — Postgres CDC (opt-in) — **DEFERRED until someone needs it**
+
+Parked deliberately (2026-07). The trigger-outbox adapter covers the real
+deployment targets (Neon has no replication-slot story anyway), and
+snapshot-windowed cursors already solved the correctness problem CDC's
+commit-ordered LSNs would have bought us. Revisit only on a concrete ask:
+self-hosted PG at write volumes where trigger overhead measurably hurts,
+or a Store-≠-Source topology.
 
 - [ ] `pgLogicalSource` (wal2json or pgoutput), LSN cursors
 - [ ] Cross-DB idempotent apply (Store ≠ Source DB)
 - [ ] Slot lag / health metrics
 
-## Phase 4 — Ergonomics
+## Phase 4 — Ergonomics ⬅️ NEXT
 
-- [ ] Full TS inference: map return type → `.value()` / `.all()` / `.entries()`
+- [ ] Full TS inference on Ripply's own query surface: map return type flows
+      to `.all()` / `.where()` / `.value()` / `.entries()` row types;
+      `where()` keys constrained to groupBy fields. (NOT an ORM — drizzle
+      keeps owning source-table access; see `RowOf` below for meeting it.)
+- [ ] `RowOf<typeof def>` / `EntryOf<typeof def>` exported type helpers so
+      apps querying tally tables through drizzle or raw SQL (like NutWords'
+      leaderboard) get typed rows without hand-written interfaces
 - [ ] Drill-down query surface polish
 - [ ] Side-by-side rebuild (build under temp name, swap)
-- [ ] Changelog pruning policy
-- [ ] Docs site / README examples
+- [ ] Changelog pruning policy: covers-based `prune()` already runs after
+      every drain; add (a) stale-cursor eviction (index removed → its cursor
+      row stops pinning the log), (b) high-water truncate escape hatch —
+      if the log is huge/ancient, truncate + reset cursors to the current
+      snapshot + rebuild from source scan. Source data is authoritative;
+      the changelog is transport, never history.
+- [ ] Column-pruned `scan()` (only map-referenced columns) — Neon rebuilds
+      are scan-bandwidth-bound
+- [ ] Docs site / README examples (incl. RavenDB feature comparison)
 
 ## Phase 5 — Reactivity (optional)
 

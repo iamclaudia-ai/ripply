@@ -58,13 +58,16 @@ DESIGN.md §3 for why a naive seq cursor silently skips out-of-order commits
 on Postgres). 60 tests green across the three-backend adapter matrix;
 invariant 9 proven deterministically. Postgres tests need a reachable PG
 (`postgres://postgres:postgres@localhost:5432` by default, or set
-`RIPPLY_TEST_PG`). Next: Phase 3 (CDC opt-in) / Phase 4 (ergonomics) per
-`PLAN.md`.
+`RIPPLY_TEST_PG`). Deployed in production: NutWords (`~/Projects/tnh`)
+leaderboard on Neon. Phase 3 (CDC) is **deferred until someone actually
+needs it** — trigger-outbox covers Neon and modest self-hosted PG. Next:
+Phase 4 (ergonomics) per `PLAN.md`.
 
 ## Conventions
 
-- **Bun** for everything: `bun test`, `bun run typecheck`. No Node-specific APIs
-  in core (adapters may use them).
+- **Bun** for everything: `bun test`, `bun run typecheck` (TypeScript 7 native
+  compiler), `bun run lint` (oxlint), `bun run format` (oxfmt). No
+  Node-specific APIs in core (adapters may use them).
 - Package name: `ripply`. Exports: `ripply` (engine + types), `ripply/sqlite`,
   `ripply/postgres`, `ripply/memory` (reference adapters, also used by tests).
 - Strict TypeScript. Core (`src/core/`) must have zero dependencies and zero
@@ -79,4 +82,5 @@ invariant 9 proven deterministically. Postgres tests need a reachable PG
 |---|---|
 | `docs/DESIGN.md` | Full design (adapted from Spark RFC 010) — the source of truth |
 | `docs/BACKGROUND.md` | Origin: Spark RFC 003, RavenDB inspiration, review findings that shaped the design |
+| `docs/VS-RAVENDB.md` | Feature-by-feature comparison with RavenDB map-reduce indexes |
 | `PLAN.md` | Phase checklist + Phase 0 task breakdown |
