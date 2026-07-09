@@ -38,9 +38,15 @@ Prove the design. Zero database code.
   - [x] 8. delete retraction
 - [x] Map versioning (fn-source hash stored with cursor; mismatch → rebuild)
       — invariant 10
-- [ ] `createRipply()` public API wrapper (DESIGN.md §6) with typed query
-      surface (`.all()` / `.where()` / `.value()` / `.entries()`) — the
-      remaining exit criterion
+- [x] `createRipply()` public API wrapper (DESIGN.md §6) with typed query
+      surface (`.all()` / `.where()` / `.value()` / `.entries()`), background
+      processor (wakeups + poll fallback, serialized work queue), avg derived
+      at query time
+
+**Phase 0 complete** — 18 tests green, §6 API compiles with aggregate-name
+and entry-type inference. Deviation from the original sketch, by design:
+Store is dumb keyed storage; all aggregate math lives in the engine
+(DESIGN.md §2 updated).
 
 **Exit criteria:** all invariants green; API in DESIGN.md §6 compiles against
 the real types with full inference.

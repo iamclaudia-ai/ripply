@@ -23,3 +23,10 @@ export {
   type IndexRuntime,
 } from './core/engine';
 export type { VerifyResult } from './core/rebuild';
+export {
+  Ripply,
+  IndexQuery,
+  createRipply,
+  type CreateRipplyOptions,
+  type TypedIndexDefinition,
+} from './core/ripply';

@@ -31,6 +31,23 @@ export function int(rng: () => number, maxExclusive: number): number {
   return Math.floor(rng() * maxExclusive);
 }
 
+/** Retry an assertion until it passes or the timeout elapses. */
+export async function eventually(
+  assertion: () => void | Promise<void>,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await assertion();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await Bun.sleep(10);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Independent oracle: from-scratch map + group + reduce over current rows
 // ---------------------------------------------------------------------------

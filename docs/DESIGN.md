@@ -96,30 +96,43 @@ state instead of the change feed. Same math, smaller capture surface.
 ## 2. The Three Interfaces
 
 ```ts
-// What produces changes. Backend-specific.
+// What produces changes. Backend-specific. (pk columns come from the
+// adapter's own configuration, so install() only names the collection.)
 interface Source {
-  install(collection: string, pk: string[]): Promise<void>;      // triggers / slot / publication
+  install(collection: string): Promise<void>;         // triggers / slot / publication
   poll(collection: string, cursor: Cursor, limit: number): Promise<ChangeBatch>;
-  scan(collection: string, onRow: (row: Row) => void): Promise<void>; // full rebuild
+  scan(collection: string, onRow: (pk: PkValue, row: Row) => void): Promise<void>; // full rebuild
+  currentCursor(collection: string): Promise<Cursor>; // feed position "now" — rebuild resumes here
   wakeups?(collection: string, onChange: () => void): Unsubscribe;    // NOTIFY / update_hook (optional)
 }
 
 interface Change { pk: PkValue; op: 'insert'|'update'|'delete'; after: Row | null; seq: Cursor; }
 interface ChangeBatch { changes: Change[]; nextCursor: Cursor; }
 
-// Where entries + reduced + cursors live. Backend-specific.
+// Where entries + reduced + cursors live. Backend-specific — and
+// deliberately DUMB: pure keyed storage. All aggregate math (linear deltas,
+// dirty-group re-reduce, delete-when-empty) lives in the ENGINE, so adapters
+// never reimplement reduce semantics and cannot drift from each other.
+// (Phase 0 refinement of this sketch's earlier applyReducedDelta/
+// reReduceGroup methods, which would have pushed aggregate logic into every
+// adapter.)
 interface Store {
   transaction<T>(fn: (tx: StoreTx) => Promise<T>): Promise<T>;
-  // within a tx:
-  readEntries(index, pk): Entry[];
-  replaceEntries(index, pk, entries: Entry[]): void;
-  applyReducedDelta(index, groupKey, delta): void;    // linear
-  reReduceGroup(index, groupKey, reduceSpec): void;   // non-linear, from entries
-  deleteReducedIfEmpty(index, groupKey): void;
+}
+interface StoreTx {
+  readEntries(index, pk): StoredEntry[];              // the row's current contribution
+  replaceEntries(index, pk, entries: StoredEntry[]): void;
+  readGroupEntries(index, groupKey): StoredEntry[];   // for non-linear re-reduce
+  allEntries(index): StoredEntry[];                   // drill-down / verify
+  getReduced(index, groupKey): ReducedRow | null;
+  putReduced(index, row: ReducedRow): void;
+  deleteReduced(index, groupKey): void;
+  allReduced(index): ReducedRow[];                    // query surface
+  truncateIndex(index): void;                         // rebuild
   getCursor(index): Cursor;
   setCursor(index, cursor): void;
-  queryReduced(index, where): Row[];
-  queryEntries(index, where): Row[];                  // drill-down
+  getIndexMeta(index): IndexMeta | null;              // map-version hash
+  setIndexMeta(index, meta): void;
 }
 ```
 
