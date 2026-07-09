@@ -75,9 +75,11 @@ the real types with full inference.
 - [x] **Cascading indexes** (RavenDB 4 OutputReduceToCollection): an index
       may consume another index's tally table; topo-ordered start, cycle
       detection, one drain settles the whole cascade
-- [ ] Example app (`examples/work-orders/`)
+- [x] Example app (`examples/work-orders/`): live SSE dashboard — random
+      insert/update/delete simulator, four indexes incl. the day→month
+      cascade, every chart read with plain SQL from the tally tables
 
-**Ship it usable after this phase.**
+**Phase 1 complete — ship it usable. ✅**
 
 ## Phase 2 — Postgres trigger-outbox
 
