@@ -8,34 +8,39 @@ database adapter exists.** Invariant tests are the spec.
 
 Prove the design. Zero database code.
 
-- [ ] `src/core/types.ts` — `Source`, `Store`, `StoreTx`, `Change`,
+- [x] `src/core/types.ts` — `Source`, `Store`, `StoreTx`, `Change`,
       `ChangeBatch`, `Entry`, `IndexDefinition`, `ReduceSpec`, `Cursor`
-- [ ] `src/core/canonical.ts` — canonical group-key serialization (sorted keys)
+- [x] `src/core/canonical.ts` — canonical group-key serialization (sorted keys)
       + PK serialization
-- [ ] `src/core/aggregates.ts` — aggregate registry classified by invertibility:
+- [x] `src/core/aggregates.ts` — aggregate registry classified by invertibility:
       linear (`sum`, `count`, `avg` as sum+count) apply deltas; non-linear
       (`min`, `max`, `first`, `last`, `distinct`) trigger group re-reduce
-- [ ] `src/core/engine.ts` — the reconcile-from-entries loop:
+- [x] `src/core/engine.ts` — the reconcile-from-entries loop:
       poll → map → readEntries → per-group delta / dirty-mark → replaceEntries →
       re-reduce dirty groups → deleteReducedIfEmpty → setCursor, all in one
       Store transaction
-- [ ] `src/core/rebuild.ts` — truncate + `source.scan()` + resume; `verify()`
+- [x] `src/core/rebuild.ts` — truncate + `source.scan()` + resume; `verify()`
       (from-scratch reduce vs. maintained index)
-- [ ] `src/memory/` — reference `memorySource` (append changes manually in
+- [x] `src/memory/` — reference `memorySource` (append changes manually in
       tests; supports simulated interleaved commit visibility) and
       `memoryStore` (transactional via snapshot/rollback)
-- [ ] `src/core/__tests__/invariants.test.ts` — invariants 1–8 from DESIGN.md §8:
-  - [ ] 1. property test: incremental == full rebuild over random op sequences
-        (the king test — write it FIRST, watch it drive the engine)
-  - [ ] 2. idempotent replay (same batch twice == once)
-  - [ ] 3. crash safety (throw between apply and cursor commit → no drift)
-  - [ ] 4. group transitions + zero-group deletion
-  - [ ] 5. non-linear re-reduce (remove the min)
-  - [ ] 6. multi-emit retraction (k entries → k−1)
-  - [ ] 7. canonical key collapse
-  - [ ] 8. delete retraction
-- [ ] Map versioning (fn-source hash stored with cursor; mismatch → rebuild)
+- [x] `src/core/__tests__/invariants.test.ts` — invariants 1–8 from DESIGN.md §8:
+  - [x] 1. property test: incremental == full rebuild over random op sequences
+        (the king test — 5 seeds × 250 random ops × 4 index shapes, checked
+        against an independent oracle; mutation-tested: broken retraction
+        fails 11/15 tests)
+  - [x] 2. idempotent replay (same batch twice == once)
+  - [x] 3. crash safety (throw between apply and cursor commit → no drift)
+  - [x] 4. group transitions + zero-group deletion
+  - [x] 5. non-linear re-reduce (remove the min)
+  - [x] 6. multi-emit retraction (k entries → k−1)
+  - [x] 7. canonical key collapse
+  - [x] 8. delete retraction
+- [x] Map versioning (fn-source hash stored with cursor; mismatch → rebuild)
       — invariant 10
+- [ ] `createRipply()` public API wrapper (DESIGN.md §6) with typed query
+      surface (`.all()` / `.where()` / `.value()` / `.entries()`) — the
+      remaining exit criterion
 
 **Exit criteria:** all invariants green; API in DESIGN.md §6 compiles against
 the real types with full inference.
