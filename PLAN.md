@@ -148,6 +148,32 @@ or a Store-≠-Source topology.
       are scan-bandwidth-bound
 - [ ] Docs site / README examples (incl. RavenDB feature comparison)
 
+## Parked — related rows / `LoadDocument` (add when a model needs it)
+
+Design captured 2026-07; deliberately NOT built. Point-in-time reporting
+(the common case) is better served by snapshotting related values into the
+row at write time — Ripply already handles corrections to denormalized
+fields via update retraction. `references` exists for the *opposite*
+semantic: retroactive regrouping ("tech moved regions → rewrite history"),
+which is rare and inherently fans out (one parent change remaps every
+child).
+
+The sketch, so we don't re-derive it:
+
+- `map: (row, { load }) => ...` + `references: { techs: { fk: 'tech_id' } }`
+- Capture triggers install on referenced tables too (capture is already
+  per-table and shared across indexes)
+- A referenced-row change → `SELECT pk FROM <collection> WHERE <fk> = $pk`
+  → synthetic remap changes for those roots; map re-runs with current
+  related data; reconcile-from-stored-entries makes it idempotent with
+  **zero new invariants** (we never depended on map purity or before-images)
+- Declared-FK invalidation beats RavenDB's reference-tracking table — the
+  reverse edge is already in the schema. A recorded-deps fallback for
+  non-FK loads only if ever genuinely needed
+- Views = same machinery: no triggers on views, so declare base tables and
+  re-select affected view rows by root pk (or just map the root table with
+  `load()`s)
+
 ## Phase 5 — Reactivity (optional)
 
 - [ ] Change notifications on reduced rows (PG `LISTEN`, SQLite post-commit
