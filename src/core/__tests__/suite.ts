@@ -503,5 +503,70 @@ export function runInvariantSuite(backendName: string, createBackend: SuiteBacke
       await engine.rebuild('countByStatus');
       expect((await engine.verify('countByStatus')).ok).toBe(true);
     });
+
+    test('paged rebuild == unpaged rebuild == oracle (streaming fold)', async () => {
+      const { backend, engine } = setup();
+      const rng = mulberry32(11);
+      for (let i = 1; i <= 40; i++) {
+        await backend.insert(randomWorkOrder(rng, `wo_${i}`));
+      }
+      await engine.drain();
+      await expectMatchesOracle(backend, INDEXES);
+
+      // pageSize 1 flushes after every source row: maximum page count, a
+      // boundary at every multi-emit row, and the fallback entry writer on
+      // stores without insertEntries. The fixture's `firstRevenue` is the
+      // sharp edge — `wo_10` sorts before `wo_2` by pk, so a fold that
+      // trusted scan order would disagree with the oracle here.
+      for (const pageSize of [1, 7, 1000]) {
+        for (const name of Object.keys(INDEXES)) {
+          await engine.rebuild(name, { pageSize });
+        }
+        await expectMatchesOracle(backend, INDEXES);
+        for (const name of Object.keys(INDEXES)) {
+          expect((await engine.verify(name)).ok).toBe(true);
+        }
+      }
+    });
+
+    test('an interrupted rebuild is never served as fresh', async () => {
+      const backend = createBackend();
+      const rng = mulberry32(23);
+      for (let i = 1; i <= 20; i++) {
+        await backend.insert(randomWorkOrder(rng, `wo_${i}`));
+      }
+
+      // A rebuild now commits in chunks, so a crash mid-scan can leave
+      // entries written and no reduced rows. The REBUILDING meta sentinel
+      // is what makes that state detectable.
+      let explode = true;
+      const boom = new Error('scan interrupted');
+      const flaky: Source = {
+        install: (c) => backend.source.install(c),
+        poll: (c, cursor, limit) => backend.source.poll(c, cursor, limit),
+        currentCursor: (c) => backend.source.currentCursor(c),
+        prune: backend.source.prune ? (c, cursors) => backend.source.prune!(c, cursors) : undefined,
+        scan: async (c, onRow) => {
+          let seen = 0;
+          await backend.source.scan(c, async (pk, row) => {
+            if (explode && seen++ === 5) throw boom;
+            await onRow(pk, row);
+          });
+        },
+      };
+
+      const crashed = createEngine({ source: flaky, store: backend.store });
+      crashed.defineIndex('countByStatus', INDEXES.countByStatus!);
+      await expect(crashed.start()).rejects.toThrow('scan interrupted');
+
+      // a fresh process over the same store: the sentinel reads as a
+      // version mismatch, so start() rebuilds rather than trusting it
+      explode = false;
+      const recovered = createEngine({ source: flaky, store: backend.store });
+      recovered.defineIndex('countByStatus', INDEXES.countByStatus!);
+      await recovered.start();
+      await expectMatchesOracle(backend, { countByStatus: INDEXES.countByStatus! });
+      expect((await recovered.verify('countByStatus')).ok).toBe(true);
+    });
   });
 }

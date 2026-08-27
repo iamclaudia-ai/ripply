@@ -111,26 +111,186 @@ export function toStoredEntries(
 // ---------------------------------------------------------------------------
 
 /**
+ * Streaming fold for ONE group.
+ *
+ * Every aggregate has forward-pass state that is O(1) per entry (`distinct`
+ * excepted — its state is the distinct set, bounded by cardinality). This is
+ * what lets `rebuild` and `verify` page a large source instead of holding it:
+ * a rebuild only ever inserts, and non-linearity is a statement about
+ * RETRACTION, not accumulation. Nothing here can retract; `applyLinearDelta`
+ * is still the only signed-delta path.
+ *
+ * Entry order does not affect the result. `first`/`last` carry the winning
+ * (pk, ord) position rather than trusting arrival order, so a scan that
+ * yields rows in any order still agrees with `reduceFull` exactly. (Float
+ * summation is the one exception — addition is not associative, so a `sum`
+ * folded in a different order can differ in its last bits. The incremental
+ * delta path already accumulates in change order, so this is a tolerance the
+ * engine has always had, not a new one.)
+ */
+export interface GroupFold {
+  add(entry: StoredEntry): void;
+  finish(): ReducedRow;
+}
+
+/** Winning (pk, ord) position for a `first`/`last` aggregate. */
+interface EdgeState {
+  pkKey: string;
+  ord: number;
+  value: unknown;
+}
+
+interface FoldState {
+  sum: number;
+  count: number;
+  /** min/max running extremum. */
+  best: number | string | null;
+  edge: EdgeState | null;
+  distinct: Map<string, unknown> | null;
+}
+
+export function createGroupFold(aggregates: ParsedAggregate[], groupKey: string): GroupFold {
+  // pkKeyOf is not free — only pay for it when first/last actually need it
+  const needsPosition = aggregates.some((agg) => agg.fn === 'first' || agg.fn === 'last');
+  const states: FoldState[] = aggregates.map(() => ({
+    sum: 0,
+    count: 0,
+    best: null,
+    edge: null,
+    distinct: null,
+  }));
+  let entryCount = 0;
+
+  return {
+    add(entry: StoredEntry): void {
+      entryCount++;
+      const pkKey = needsPosition ? pkKeyOf(entry.pk) : '';
+
+      for (let i = 0; i < aggregates.length; i++) {
+        const agg = aggregates[i]!;
+        const state = states[i]!;
+        switch (agg.fn) {
+          case 'sum': {
+            state.sum += numeric(agg, entry.values[agg.field!]) ?? 0;
+            break;
+          }
+          case 'count': {
+            if (agg.field === null) {
+              state.count++;
+            } else {
+              const value = entry.values[agg.field];
+              if (value !== null && value !== undefined) state.count++;
+            }
+            break;
+          }
+          case 'avg': {
+            const value = numeric(agg, entry.values[agg.field!]);
+            if (value !== null) {
+              state.sum += value;
+              state.count++;
+            }
+            break;
+          }
+          case 'min':
+          case 'max': {
+            const value = comparable(agg, entry.values[agg.field!]);
+            if (value === null) break;
+            if (state.best === null) {
+              state.best = value;
+            } else if (typeof value !== typeof state.best) {
+              throw new RipplyError(
+                `aggregate "${agg.out}": cannot compare ${typeof state.best} with ${typeof value}`,
+              );
+            } else if (agg.fn === 'min' ? value < state.best : value > state.best) {
+              state.best = value;
+            }
+            break;
+          }
+          case 'first':
+          case 'last': {
+            // NOT arrival order: v1 semantics are first/last in (pk, ord)
+            // order, so the fold must compare positions explicitly.
+            const candidate: EdgeState = {
+              pkKey,
+              ord: entry.ord,
+              value: entry.values[agg.field!] ?? null,
+            };
+            const cmp = state.edge === null ? 0 : comparePosition(candidate, state.edge);
+            if (state.edge === null || (agg.fn === 'first' ? cmp < 0 : cmp > 0)) {
+              state.edge = candidate;
+            }
+            break;
+          }
+          case 'distinct': {
+            const value = entry.values[agg.field!];
+            if (value === null || value === undefined) break;
+            state.distinct ??= new Map<string, unknown>();
+            const key = canonicalJson(value);
+            if (!state.distinct.has(key)) state.distinct.set(key, value);
+            break;
+          }
+        }
+      }
+    },
+
+    finish(): ReducedRow {
+      const values: Record<string, unknown> = {};
+      for (let i = 0; i < aggregates.length; i++) {
+        const agg = aggregates[i]!;
+        const state = states[i]!;
+        switch (agg.fn) {
+          case 'sum':
+            values[agg.out] = state.sum;
+            break;
+          case 'count':
+            values[agg.out] = state.count;
+            break;
+          case 'avg':
+            values[agg.out] = { sum: state.sum, count: state.count };
+            break;
+          case 'min':
+          case 'max':
+            values[agg.out] = state.best;
+            break;
+          case 'first':
+          case 'last':
+            values[agg.out] = state.edge ? state.edge.value : null;
+            break;
+          case 'distinct':
+            values[agg.out] = state.distinct
+              ? [...state.distinct.entries()]
+                  .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+                  .map(([, value]) => value)
+              : [];
+            break;
+        }
+      }
+      return { groupKey, group: groupOfKey(groupKey), values, entryCount };
+    },
+  };
+}
+
+function comparePosition(a: EdgeState, b: EdgeState): number {
+  if (a.pkKey !== b.pkKey) return a.pkKey < b.pkKey ? -1 : 1;
+  return a.ord - b.ord;
+}
+
+/**
  * Reduce a group from scratch, from its entries. Entries are ordered
  * canonically by (pk, ord) so `first`/`last` are deterministic — v1
  * semantics are "first/last in pk order", not insertion time.
+ *
+ * This is `createGroupFold` over the sorted entries: one implementation, so
+ * the streaming rebuild and the dirty-group re-reduce cannot drift apart.
  */
 export function reduceFull(
   aggregates: ParsedAggregate[],
   groupKey: string,
   entries: StoredEntry[],
 ): ReducedRow {
-  const ordered = [...entries].sort(compareEntries);
-  const values: Record<string, unknown> = {};
-  for (const agg of aggregates) {
-    values[agg.out] = reduceOne(agg, ordered);
-  }
-  return {
-    groupKey,
-    group: groupOfKey(groupKey),
-    values,
-    entryCount: entries.length,
-  };
+  const fold = createGroupFold(aggregates, groupKey);
+  for (const entry of [...entries].sort(compareEntries)) fold.add(entry);
+  return fold.finish();
 }
 
 function compareEntries(a: StoredEntry, b: StoredEntry): number {
@@ -138,50 +298,6 @@ function compareEntries(a: StoredEntry, b: StoredEntry): number {
   const kb = pkKeyOf(b.pk);
   if (ka !== kb) return ka < kb ? -1 : 1;
   return a.ord - b.ord;
-}
-
-function reduceOne(agg: ParsedAggregate, ordered: StoredEntry[]): unknown {
-  switch (agg.fn) {
-    case 'sum':
-      return sumOf(agg, valuesOf(ordered));
-    case 'count':
-      return countOf(agg, valuesOf(ordered));
-    case 'avg':
-      return avgOf(agg, valuesOf(ordered));
-    case 'min':
-    case 'max': {
-      let best: number | string | null = null;
-      for (const entry of ordered) {
-        const value = comparable(agg, entry.values[agg.field!]);
-        if (value === null) continue;
-        if (best === null) best = value;
-        else if (typeof value !== typeof best) {
-          throw new RipplyError(
-            `aggregate "${agg.out}": cannot compare ${typeof best} with ${typeof value}`,
-          );
-        } else if (agg.fn === 'min' ? value < best : value > best) {
-          best = value;
-        }
-      }
-      return best;
-    }
-    case 'first':
-      return ordered.length ? (ordered[0]!.values[agg.field!] ?? null) : null;
-    case 'last':
-      return ordered.length ? (ordered[ordered.length - 1]!.values[agg.field!] ?? null) : null;
-    case 'distinct': {
-      const seen = new Map<string, unknown>();
-      for (const entry of ordered) {
-        const value = entry.values[agg.field!];
-        if (value === null || value === undefined) continue;
-        const key = canonicalJson(value);
-        if (!seen.has(key)) seen.set(key, value);
-      }
-      return [...seen.entries()]
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([, value]) => value);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,10 +366,6 @@ function initValues(aggregates: ParsedAggregate[]): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 // Field helpers
 // ---------------------------------------------------------------------------
-
-function valuesOf(entries: StoredEntry[]): Entry[] {
-  return entries.map((entry) => entry.values);
-}
 
 /** null/undefined are skipped; any other non-number is a hard error. */
 function numeric(agg: ParsedAggregate, value: unknown): number | null {

@@ -22,6 +22,9 @@ import type { Database } from 'bun:sqlite';
 import { RipplyError } from '../core/errors';
 import type { Change, ChangeBatch, Cursor, PkValue, Row, Scalar, Source } from '../core/types';
 
+/** Rows per keyset page in scan(). */
+const SCAN_PAGE = 1000;
+
 export interface SqliteSourceOptions {
   db: Database;
   collections: Record<string, { pk: string[] }>;
@@ -126,17 +129,52 @@ export class SqliteSource implements Source {
     };
   }
 
+  /**
+   * Full-table scan, PAGED BY PRIMARY KEY (keyset pagination).
+   *
+   * Not `.all()` (which materialized the whole table) and deliberately not
+   * `.iterate()` either: the rebuild now flushes entry pages inside store
+   * transactions as it scans, and SQLite refuses to COMMIT on a connection
+   * with a statement still in progress. Each page is a completed statement,
+   * so the scan and the writes never interleave.
+   *
+   * Paging across statements means a row inserted below the watermark after
+   * we passed it is missed by the scan — safe, because rebuild captured
+   * `currentCursor` first and the insert replays from the changelog. Primary
+   * keys must be immutable (already true: capture carries only the new pk).
+   */
   async scan(
     collection: string,
     onRow: (pk: PkValue, row: Row) => void | Promise<void>,
   ): Promise<void> {
     const config = this.mustCollection(collection);
-    const rows = this.db.query(`SELECT * FROM ${ident(collection)}`).all() as Row[];
-    for (const row of rows) {
-      await onRow(
-        config.pk.map((column) => row[column] as Scalar),
-        row,
-      );
+    const columns = config.pk.map(ident);
+    const orderBy = columns.join(', ');
+    const placeholders = columns.map(() => '?').join(', ');
+    const keyset = `WHERE (${orderBy}) > (${placeholders})`;
+
+    let watermark: Scalar[] | null = null;
+    for (;;) {
+      const rows = this.db
+        .query(
+          `SELECT * FROM ${ident(collection)}
+           ${watermark === null ? '' : keyset}
+           ORDER BY ${orderBy}
+           LIMIT ${SCAN_PAGE}`,
+        )
+        .all(...((watermark ?? []) as never[])) as Row[];
+      if (rows.length === 0) return;
+
+      for (const row of rows) {
+        await onRow(
+          config.pk.map((column) => row[column] as Scalar),
+          row,
+        );
+      }
+
+      if (rows.length < SCAN_PAGE) return;
+      const last = rows[rows.length - 1]!;
+      watermark = config.pk.map((column) => last[column] as Scalar);
     }
   }
 

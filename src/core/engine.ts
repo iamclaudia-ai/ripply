@@ -24,7 +24,7 @@ import {
 } from './aggregates';
 import { tallyTableOf } from './canonical';
 import { RipplyError } from './errors';
-import { rebuildIndex, verifyIndex, type VerifyResult } from './rebuild';
+import { rebuildIndex, verifyIndex, type RebuildOptions, type VerifyResult } from './rebuild';
 import type { Change, IndexDefinition, Source, Store, StoreTx } from './types';
 import { mapVersionOf } from './version';
 
@@ -246,10 +246,15 @@ export class Engine {
     }
   }
 
-  /** Truncate + full scan + resume (DESIGN.md §7). */
-  async rebuild(name: string): Promise<void> {
+  /**
+   * Truncate + paged full scan + resume (DESIGN.md §7).
+   *
+   * Commits in chunks rather than one transaction, so the index reads
+   * empty/partial while it runs. Do not drain the same index concurrently.
+   */
+  async rebuild(name: string, options?: RebuildOptions): Promise<void> {
     await this.ensureStorage(name);
-    return rebuildIndex(this, name);
+    return rebuildIndex(this, name, options);
   }
 
   /** From-scratch reduce vs. the maintained index (dev/CI assertion). */

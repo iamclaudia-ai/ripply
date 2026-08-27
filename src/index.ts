@@ -13,7 +13,7 @@ export { canonicalJson, groupKeyOf, groupOfKey, pkKeyOf, tallyTableOf } from './
 export { parseReduceSpec, isLinear, type ParsedAggregate } from './core/aggregates';
 export { fnv1aHex, mapVersionOf } from './core/version';
 export { Engine, createEngine, type CreateEngineOptions, type IndexRuntime } from './core/engine';
-export type { VerifyResult } from './core/rebuild';
+export type { RebuildOptions, VerifyResult } from './core/rebuild';
 export {
   Ripply,
   IndexQuery,

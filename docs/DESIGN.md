@@ -395,6 +395,79 @@ its `_sum`/`_count` component columns; `first`/`last` don't cascade.
 - **verify():** run a from-scratch reduce and diff against the maintained index.
   Ships as a dev/CI assertion and powers property test #1 below.
 
+### Streaming rebuild
+
+Both `rebuild()` and `verify()` **page** the scan and fold incrementally,
+carrying only per-group accumulator state. Memory is O(groups + page), not
+O(source rows) — which is what makes a large historical backfill fit.
+
+This is sound even for non-linear indexes, because **a rebuild only ever
+inserts**. Non-linearity is a statement about *retraction*: you cannot pull a
+value out of a `max` without re-reading the group. Building forward from an
+empty index retracts nothing, so every aggregate has O(1) forward-pass state:
+
+| fn | forward state |
+|---|---|
+| `sum`, `count` | running total |
+| `avg` | running sum + count |
+| `min`, `max` | running extremum |
+| `first`, `last` | the winning `(pk, ord)` position and its value |
+| `distinct` | the distinct set — bounded by cardinality, not row count |
+
+`distinct` is the one accumulator that is not O(1); its state is the group's
+distinct set. `createGroupFold` is order-independent (it compares `(pk, ord)`
+positions rather than trusting arrival order), and `reduceFull` is implemented
+*on top of it* over the sorted entries — one implementation, so the streaming
+rebuild and the dirty-group re-reduce cannot drift apart.
+
+Float summation is the single order-sensitive case: addition is not
+associative, so a `sum` folded in scan order can differ in its last bits from
+one folded in `(pk, ord)` order. The incremental delta path already accumulates
+in change order, so this is a tolerance the engine has always had.
+
+### Rebuild is no longer one transaction
+
+Folding in memory kept the write transaction short. Streaming would put the
+entire scan inside it — on hosted Postgres that means a multi-hour transaction,
+snapshot bloat, and a dropped connection costing the whole run. So a rebuild
+commits in chunks:
+
+1. truncate + resume cursor + a `__rebuilding__` map-version sentinel
+2. entry pages, one transaction each (`pageSize`, default 2000 source rows)
+3. reduced rows, chunked
+4. the real map version — the commit that publishes the index as fresh
+
+Consequences, in exchange for bounded memory and bounded transactions:
+
+- **The index reads empty/partial while a rebuild runs.** Accept the window, or
+  don't rebuild during hours you care about.
+- **An interrupted rebuild is never served as fresh.** The sentinel can never
+  equal a real map version (a hash), so `ensureFresh` sees a mismatch and
+  rebuilds on the next `start()`.
+- **Never drain an index concurrently with its own rebuild.** The `Ripply`
+  facade serializes them through `runExclusive`; a bare `Engine` does not.
+
+### Scanning is keyset-paged
+
+`Source.scan()` pages by primary key rather than reading the table into the
+client (`SELECT to_jsonb(t)` over 20M rows was the real memory ceiling, ahead
+of anything the fold did). On Postgres the watermark round-trips through text
+and is cast back to the pk column's own SQL type — comparing a `bigint` pk as
+text would order 1000 before 999 and silently drop most of the table.
+
+Paging across statements instead of reading one snapshot has two consequences:
+
+- A row inserted *below* the watermark after we passed it is missed by the
+  scan. Safe: rebuild captured `currentCursor` before scanning, so the insert
+  replays from the changelog.
+- A row whose **pk changes** mid-scan could be seen twice. Ripply already
+  requires immutable primary keys — capture carries only the new pk, so the old
+  pk's entries could never be retracted either — and `_ripply_entries`'
+  `PRIMARY KEY (idx, pk, ord)` turns a double-scan into a loud unique violation
+  rather than silent duplication.
+
+See `docs/BULK-LOAD.md` for the backfill runbook this exists to serve.
+
 ---
 
 ## 8. Correctness Invariants (the test plan)

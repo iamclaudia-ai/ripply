@@ -33,7 +33,10 @@ this package via a thin adapter on its side.
 3. **Aggregates split by invertibility.** Linear (`sum`, `count`, `avg` as
    sum+count) apply signed deltas O(1). Non-linear (`min`, `max`, `first`,
    `last`, `distinct`) mark the group dirty and re-reduce from that group's
-   entries only.
+   entries only. Note the corollary: invertibility is about RETRACTION, so a
+   rebuild — which only ever inserts — folds every aggregate forward in O(1)
+   (`createGroupFold`). `reduceFull` is that same fold over sorted entries, so
+   the two paths cannot drift.
 4. **Three interfaces:** `Source` (change capture), `Store` (entries + reduced +
    cursors), `Engine` (backend-free core). Cursor advance and index writes share
    one Store transaction → exactly-once when Source and Store are co-located;
@@ -55,13 +58,18 @@ this package via a thin adapter on its side.
 Phases 0–2 **complete**: engine + in-memory reference, SQLite adapter,
 Postgres adapter (trigger-outbox with **snapshot-windowed cursors** — see
 DESIGN.md §3 for why a naive seq cursor silently skips out-of-order commits
-on Postgres). 60 tests green across the three-backend adapter matrix;
+on Postgres). 73 tests green across the three-backend adapter matrix;
 invariant 9 proven deterministically. Postgres tests need a reachable PG
 (`postgres://postgres:postgres@localhost:5432` by default, or set
 `RIPPLY_TEST_PG`). Deployed in production: NutWords (`~/Projects/tnh`)
 leaderboard on Neon. Phase 3 (CDC) is **deferred until someone actually
-needs it** — trigger-outbox covers Neon and modest self-hosted PG. Next:
-Phase 4 (ergonomics) per `PLAN.md`.
+needs it** — trigger-outbox covers Neon and modest self-hosted PG.
+
+`rebuild()`/`verify()` **stream** (issue #3): the scan is keyset-paged and
+folded into per-group accumulators, so memory is O(groups + page) rather than
+O(source rows), and the work commits in chunks instead of one long
+transaction. The index reads empty/partial while a rebuild runs — see
+`docs/BULK-LOAD.md`. Next: Phase 4 (ergonomics) per `PLAN.md`.
 
 ## Conventions
 
@@ -83,4 +91,5 @@ Phase 4 (ergonomics) per `PLAN.md`.
 | `docs/DESIGN.md` | Full design (adapted from Spark RFC 010) — the source of truth |
 | `docs/BACKGROUND.md` | Origin: Spark RFC 003, RavenDB inspiration, review findings that shaped the design |
 | `docs/VS-RAVENDB.md` | Feature-by-feature comparison with RavenDB map-reduce indexes |
+| `docs/BULK-LOAD.md` | Backfill runbook: suppress capture, load, rebuild, verify |
 | `PLAN.md` | Phase checklist + Phase 0 task breakdown |

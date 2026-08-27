@@ -18,7 +18,7 @@
 import { canonicalJson } from './canonical';
 import { createEngine, type CreateEngineOptions, type Engine, type IndexRuntime } from './engine';
 import { RipplyError } from './errors';
-import type { VerifyResult } from './rebuild';
+import type { RebuildOptions, VerifyResult } from './rebuild';
 import type {
   AggregateSpec,
   Entry,
@@ -164,8 +164,13 @@ export class Ripply {
     });
   }
 
-  async rebuild(name: string): Promise<void> {
-    return this.runExclusive(() => this.engine.rebuild(name));
+  /**
+   * Truncate + paged full scan + resume. Serialized against `drain()` by
+   * `runExclusive`, which is what keeps the now-chunked rebuild safe: no
+   * batch is applied to a half-built index.
+   */
+  async rebuild(name: string, options?: RebuildOptions): Promise<void> {
+    return this.runExclusive(() => this.engine.rebuild(name, options));
   }
 
   async verify(name: string): Promise<VerifyResult> {

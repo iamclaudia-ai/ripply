@@ -69,6 +69,9 @@ function literal(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** Rows per keyset page in scan(). */
+const SCAN_PAGE = 1000;
+
 /** A pg_snapshot in which nothing is visible — "the beginning". */
 const BEGINNING = '1:1:';
 
@@ -96,6 +99,7 @@ const WINDOW_FILTER = `
 export class PostgresSource implements Source {
   private readonly sql: SQL;
   private readonly collections = new Map<string, { pk: string[] }>();
+  private readonly pkTypeCache = new Map<string, string[]>();
   private changelogReady: Promise<void> | null = null;
 
   constructor(options: PostgresSourceOptions) {
@@ -174,24 +178,93 @@ export class PostgresSource implements Source {
     };
   }
 
+  /**
+   * Full-table scan, PAGED BY PRIMARY KEY (keyset pagination) so a rebuild
+   * never materializes the table client-side. `SELECT to_jsonb(t)` over 20M
+   * rows was the real memory ceiling — ahead of anything the fold did.
+   *
+   * Two consequences of paging across statements instead of reading one
+   * snapshot:
+   *
+   *  - A row inserted BELOW the watermark after we passed it is missed by
+   *    the scan. That is safe: rebuild captures `currentCursor` before the
+   *    scan, so the insert replays from the changelog afterwards.
+   *  - A row whose PK CHANGES mid-scan could be seen twice. Ripply already
+   *    requires immutable primary keys — capture carries only the new pk,
+   *    so the old pk's entries could never be retracted either — and the
+   *    `_ripply_entries` primary key turns a double-scan into a loud unique
+   *    violation rather than silent duplication.
+   */
   async scan(
     collection: string,
     onRow: (pk: PkValue, row: Row) => void | Promise<void>,
   ): Promise<void> {
     const config = this.mustCollection(collection);
+    const types = await this.pkTypes(collection);
+
     // Render each row through to_jsonb ON THE SERVER — the exact same
     // rendering the capture trigger uses for after-images. A rebuild's
     // scan and incremental capture then see byte-identical row shapes
-    // (bigint → number, timestamptz → offset ISO string, jsonb → value),
+    // (bigint -> number, timestamptz -> offset ISO string, jsonb -> value),
     // which invariant 1 depends on. Client-side driver decoding would
     // disagree (Bun returns int8 as a string, timestamps as Dates).
-    const records = (await this.sql.unsafe(
-      `SELECT to_jsonb(t)::text AS row FROM ${ident(collection)} AS t`,
-    )) as Array<{ row: string }>;
-    for (const record of records) {
-      const row = JSON.parse(record.row) as Row;
-      await onRow(config.pk.map((column) => row[column]) as PkValue, row);
+    //
+    // The keyset columns come back SEPARATELY as text: round-tripping the
+    // watermark through text and casting it back to the column's own type
+    // is exact for every pk type, and does not depend on how the driver
+    // chose to decode it.
+    const columns = config.pk.map((column) => `t.${ident(column)}`);
+    const keySelect = config.pk
+      .map((column, i) => `t.${ident(column)}::text AS ${ident(`_ripply_k${i}`)}`)
+      .join(', ');
+    const orderBy = columns.join(', ');
+    const bounds = columns.map((_, i) => `$${i + 1}::${types[i]}`).join(', ');
+    const keyset = `WHERE (${columns.join(', ')}) > (${bounds})`;
+
+    let watermark: string[] | null = null;
+    for (;;) {
+      const records = (await this.sql.unsafe(
+        `SELECT to_jsonb(t)::text AS row, ${keySelect}
+         FROM ${ident(collection)} AS t
+         ${watermark === null ? '' : keyset}
+         ORDER BY ${orderBy}
+         LIMIT ${SCAN_PAGE}`,
+        watermark ?? [],
+      )) as Array<Record<string, string>>;
+      if (records.length === 0) return;
+
+      for (const record of records) {
+        const row = JSON.parse(record.row!) as Row;
+        await onRow(config.pk.map((column) => row[column]) as PkValue, row);
+      }
+
+      if (records.length < SCAN_PAGE) return;
+      const last = records[records.length - 1]!;
+      watermark = config.pk.map((_, i) => last[`_ripply_k${i}`]!);
     }
+  }
+
+  /** Declared SQL types of a collection's pk columns, for the keyset casts. */
+  private async pkTypes(collection: string): Promise<string[]> {
+    const cached = this.pkTypeCache.get(collection);
+    if (cached) return cached;
+    const config = this.mustCollection(collection);
+    const records = (await this.sql.unsafe(
+      `SELECT attname, format_type(atttypid, atttypmod) AS type
+       FROM pg_attribute
+       WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped`,
+      [ident(collection)],
+    )) as Array<{ attname: string; type: string }>;
+    const byName = new Map(records.map((record) => [record.attname, record.type]));
+    const types = config.pk.map((column) => {
+      const type = byName.get(column);
+      if (!type) {
+        throw new RipplyError(`postgres: collection "${collection}" has no column "${column}"`);
+      }
+      return type;
+    });
+    this.pkTypeCache.set(collection, types);
+    return types;
   }
 
   async currentCursor(collection: string): Promise<Cursor> {
