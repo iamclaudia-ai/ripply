@@ -83,33 +83,65 @@ Normal bulk-load hygiene applies and is unrelated to Ripply: `COPY` over
 row-by-row inserts, drop and recreate non-essential indexes on the source
 table, batch your transactions.
 
-### 3. Rebuild the affected indexes
+### 3. Rebuild the blast radius — and only the blast radius
+
+**The rule:** rebuild every index whose collection you loaded into, plus
+everything transitively downstream of those. Nothing else.
+
+Do **not** loop `engine.cascadeOrder()` unfiltered. It returns *every* index,
+and `rebuild` truncates before it scans — so an unfiltered loop takes indexes
+unrelated to your import down for the duration and pays for a full scan of
+their collections, which is the exact cost this runbook exists to avoid. An
+append-only table nobody prunes is the worst thing to scan by accident.
+
+Do **not** hand-write the list either. It rots the same way a hand-written
+order would: someone adds a cascade downstream of an index you rebuild, and
+the numbers are quietly stale until somebody notices.
+
+Compute it. `cascadeOrder()` is upstream-first, so one pass propagates
+downstream reachability:
 
 ```ts
-for (const name of ['player_stats', 'play_stats', 'word_stats', 'top_words']) {
-  await ripply.rebuild(name);
+import { tallyTableOf } from 'ripply';
+
+/** Indexes to rebuild after loading `collections`, in cascade order. */
+function blastRadius(order: string[], collectionOf: Record<string, string>, loaded: string[]) {
+  const dirty = new Set(loaded);
+  const affected: string[] = [];
+  for (const name of order) {          // upstream before downstream
+    if (!dirty.has(collectionOf[name]!)) continue;
+    affected.push(name);
+    // a downstream index reads THIS index's tally table as its collection
+    dirty.add(tallyTableOf(name));
+  }
+  return affected;
+}
+
+for (const name of blastRadius(engine.cascadeOrder(), COLLECTION_OF, ['game_play', 'game_player'])) {
+  await ripply.rebuild(name, { pageSize: 10_000 });
 }
 ```
+
+`COLLECTION_OF` is a `{ indexName: collectionName }` map you keep next to your
+index definitions. (The engine knows this already, but `runtimeOf` is internal
+— if this map turns out to be a recurring annoyance, that's an argument for a
+`rebuildFor(collections)` helper in the library rather than in every caller.)
 
 Rebuild captures the feed position **before** scanning, so anything real
 players did during the load and during the scan replays from the changelog
 afterwards — reconcile-from-entries makes that replay converge. Live play is
 never lost, only applied late.
 
-Tune with `pageSize` if you need to:
+**Tuning `pageSize`.** Smaller pages mean less memory and shorter
+transactions; larger pages mean fewer per-transaction round trips, which
+dominate against a remote database. The default is 2000. `pageSize` counts
+**source rows**, so a multi-emit index (one entry per word formed) writes many
+more entries per page than a 1:1 index — size it by the emit fan-out, not by
+the row count.
 
 ```ts
-await ripply.rebuild('word_stats', { pageSize: 500 });  // default 2000
+await ripply.rebuild('word_stats', { pageSize: 10_000 });
 ```
-
-Smaller pages mean less memory and shorter transactions; larger pages mean
-fewer round trips. `pageSize` counts **source rows**, so a multi-emit index
-(one entry per word formed) writes many more entries per page than a 1:1 index
-— size it by the emit fan-out, not by the row count.
-
-**Cascade order matters.** If `top_words` reads the tally table of another
-index, rebuild the upstream one first. `engine.cascadeOrder()` gives the right
-order.
 
 ### 4. Drain, verify, prune
 
@@ -151,6 +183,8 @@ Memory during a rebuild is O(groups + page), not O(source rows):
 - **`distinct` is the exception.** Its accumulator is the group's distinct set,
   held for the whole scan. Bounded by cardinality rather than row count, but
   check that bound before putting a `distinct` on a high-cardinality group.
+  Every other aggregate — including `avg`, which folds as a `{ sum, count }`
+  pair — is a fixed-size accumulator per group.
 
 ---
 
