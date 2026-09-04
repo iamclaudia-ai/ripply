@@ -1,6 +1,6 @@
 {
   "name": "ripply",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "description": "Real-time incremental map-reduce indexes for SQLite and Postgres — RavenDB-style pre-computed aggregates as a tiny standalone library",
   "keywords": [
     "aggregates",
@@ -21,7 +21,8 @@
   },
   "files": [
     "src",
-    "docs"
+    "docs",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "sideEffects": false,
