@@ -278,13 +278,31 @@ Classified automatically by invertibility:
 - **Linear (delta-maintained):** `sum`, `count`, `avg` (stored as sum+count;
   sum-of-squares if we add variance/stddev). Apply signed deltas to the reduced
   row directly. O(1) per change.
-- **Non-linear (re-reduced from entries):** `min`, `max`, `first`, `last`,
-  `distinct`. When affected, mark the group dirty and re-reduce **from that
-  group's entries only** (cheap — one group, not the table). `distinct` can
-  store the value set, or an HLL sketch for approximate-at-scale.
+- **Non-linear:** `min`, `max`, `first`, `last`, `distinct`. When the reduced
+  row alone can't answer, mark the group dirty and re-reduce **from that
+  group's entries only**. `distinct` can store the value set, or an HLL sketch
+  for approximate-at-scale.
 
 The entries table is what makes non-linear aggregates maintainable at all — you
 cannot recover a new `min` from a reduced scalar once the old min leaves.
+
+**But "one group" is not cheap when the group is huge** (issue #7): a
+leaderboard's per-player group grows forever, and NutWords re-read a 115 MB
+group per game turn. So the decision is made per change and per aggregate
+(`applyDelta`), never per index:
+
+| Aggregate | O(1) from the reduced row | Re-reduce from entries |
+|---|---|---|
+| `sum` / `count` / `avg` | always | never |
+| `min` / `max` | inserts; retracting a value strictly inside the extreme; retracting the extreme when a new value reaches it | the extreme leaves and nothing arriving reaches it (or the row disagrees with the entries) |
+| `first` / `last` / `distinct` | never | every change (the row holds no edge position or value set), so an index containing one re-reduces every touched group without reading its row first |
+
+Linear aggregates beside a `max` keep their deltas: one `max` no longer turns
+four sums into a scan. The trade is float precision: those sums now accumulate
+by signed delta, as all-linear indexes always have, so a float `sum`/`avg` can
+differ from a from-scratch reduce in its last bits. An append-only workload over `min`/`max` + linear
+aggregates never reads a group at all. Retaining a top-K runner-up list per
+extreme would make retraction O(1) too — deferred until a workload needs it.
 
 ---
 
@@ -483,7 +501,8 @@ against each real adapter:
    back together).
 4. **Group transitions:** an update moving a row between groups decrements old,
    increments new; a group hitting zero is deleted.
-5. **Non-linear:** removing a group's current `min`/`max` re-reduces correctly.
+5. **Non-linear:** removing a group's current `min`/`max` re-reduces correctly
+   — and inserting into one never reads the group (issue #7).
 6. **Multi-emit:** map returning k then k−1 entries retracts exactly one.
 7. **Canonical keys:** group objects with differing key order collapse to one
    group.

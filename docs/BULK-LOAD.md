@@ -20,12 +20,12 @@ streamed through the normal incremental path. Three things go wrong at once:
    full size for the entire catch-up.
 2. **Catch-up is slow.** Batches are 500 changes by default; a 400K-row import
    is measured in hours.
-3. **Non-linear indexes go quadratic.** `isLinear` requires *every* aggregate
-   in an index to be `sum`/`count`/`avg`. A single `max` anywhere makes the
-   whole index non-linear, and then each batch marks groups dirty and
-   re-reduces from the group's **entire** entry set. Few groups with enormous
-   entry sets — a leaderboard, exactly — is the worst case: every 500-change
-   batch re-reads ~10,000-entry groups, tens of thousands of times over.
+3. **Some aggregates still re-read whole groups.** Since 0.2.0 `min`/`max`
+   beside linear aggregates are O(1) on insert, so an import into a
+   leaderboard no longer re-reads each player's group per batch. But an index
+   with `first`/`last`/`distinct` still re-reduces every touched group from
+   its **entire** entry set, once per 500-change batch — and few groups with
+   enormous entry sets turns that quadratic.
 
 A rebuild does the same work in one forward pass. For a bulk load it isn't an
 optimization, it's the only viable mode.

@@ -73,8 +73,9 @@ day→month cascade) in ~2ms per drain, with the changelog auto-pruned to zero.
 2. **Map** — each changed row is mapped to zero-or-more index entries.
 3. **Reconcile** — the row's *previous* contribution is read from Ripply's own
    entries table and reconciled toward the new one. Linear aggregates
-   (`sum`/`count`/`avg`) apply O(1) deltas; non-linear (`min`/`max`/`distinct`)
-   re-reduce just the affected group from its entries.
+   (`sum`/`count`/`avg`) apply O(1) deltas, and so do `min`/`max` until their
+   current extreme is retracted; only then (or for `first`/`last`/`distinct`)
+   is the affected group re-reduced from its entries.
 4. **Drill down** — the intermediate entries are queryable: not just
    "49 pending," but *which* 49.
 

@@ -42,9 +42,11 @@ export type MapFn<TRow extends Row = Row, TEntry extends Entry = Entry> = (
 export type LinearAggregateFn = 'sum' | 'count' | 'avg';
 
 /**
- * Non-linear aggregates cannot be maintained from a reduced scalar alone
- * (you can't recover the new min once the old min leaves) — affected groups
- * are marked dirty and re-reduced from that group's stored entries.
+ * Non-linear aggregates cannot always be maintained from a reduced scalar
+ * (you can't recover the new min once the old min leaves). `min`/`max` stay
+ * O(1) until their current extreme is retracted; then, and for any change
+ * to an existing `first`/`last`/`distinct` group, the group is marked dirty
+ * and re-reduced from its stored entries.
  */
 export type NonLinearAggregateFn = 'min' | 'max' | 'first' | 'last' | 'distinct';
 

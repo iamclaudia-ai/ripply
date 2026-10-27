@@ -33,7 +33,11 @@ this package via a thin adapter on its side.
 3. **Aggregates split by invertibility.** Linear (`sum`, `count`, `avg` as
    sum+count) apply signed deltas O(1). Non-linear (`min`, `max`, `first`,
    `last`, `distinct`) mark the group dirty and re-reduce from that group's
-   entries only. Note the corollary: invertibility is about RETRACTION, so a
+   entries only — but the call is made **per change and per aggregate**
+   (`applyDelta`, issue #7): `min`/`max` stay O(1) until their current extreme
+   is retracted, and linear aggregates beside them keep their deltas. A
+   leaderboard group grows forever, so "only one group" is not cheap. Note
+   the corollary: invertibility is about RETRACTION, so a
    rebuild — which only ever inserts — folds every aggregate forward in O(1)
    (`createGroupFold`). `reduceFull` is that same fold over sorted entries, so
    the two paths cannot drift.
@@ -58,11 +62,12 @@ this package via a thin adapter on its side.
 Phases 0–2 **complete**: engine + in-memory reference, SQLite adapter,
 Postgres adapter (trigger-outbox with **snapshot-windowed cursors** — see
 DESIGN.md §3 for why a naive seq cursor silently skips out-of-order commits
-on Postgres). 73 tests green across the three-backend adapter matrix;
+on Postgres). 83 tests green across the three-backend adapter matrix;
 invariant 9 proven deterministically. Postgres tests need a reachable PG
 (`postgres://postgres:postgres@localhost:5432` by default, or set
 `RIPPLY_TEST_PG`). Deployed in production: NutWords (`~/Projects/tnh`)
-leaderboard on Neon. Phase 3 (CDC) is **deferred until someone actually
+leaderboard on Neon (capture paused there since Sep 2026 pending #7, which
+0.2.0 ships). Phase 3 (CDC) is **deferred until someone actually
 needs it** — trigger-outbox covers Neon and modest self-hosted PG.
 
 `rebuild()`/`verify()` **stream** (issue #3): the scan is keyset-paged and

@@ -3,8 +3,10 @@
  *
  * - Linear (`sum`, `count`, `avg` as sum+count): accept signed deltas, O(1)
  *   per change against the reduced row.
- * - Non-linear (`min`, `max`, `first`, `last`, `distinct`): the group is
- *   marked dirty and re-reduced from that group's stored entries only.
+ * - Non-linear (`min`, `max`, `first`, `last`, `distinct`): cannot always be
+ *   maintained from the reduced row. `applyDelta` decides per change: `min`/
+ *   `max` stay O(1) unless their current extreme is retracted; otherwise the
+ *   group is marked dirty and re-reduced from its stored entries only.
  *
  * Everything here is pure — no store, no source, no engine state.
  */
@@ -31,8 +33,6 @@ const AGGREGATE_FNS = new Set<AggregateFn>([
   'last',
   'distinct',
 ]);
-
-const LINEAR_FNS = new Set<AggregateFn>(['sum', 'count', 'avg']);
 
 /** Validate a reduce spec and flatten it into parsed aggregates. */
 export function parseReduceSpec(spec: ReduceSpec): ParsedAggregate[] {
@@ -65,10 +65,6 @@ function assertAggregateFn(out: string, fn: string): asserts fn is AggregateFn {
   if (!AGGREGATE_FNS.has(fn as AggregateFn)) {
     throw new RipplyError(`aggregate "${out}": unknown aggregate fn "${fn}"`);
   }
-}
-
-export function isLinear(aggregates: ParsedAggregate[]): boolean {
-  return aggregates.every((agg) => LINEAR_FNS.has(agg.fn));
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +113,7 @@ export function toStoredEntries(
  * excepted — its state is the distinct set, bounded by cardinality). This is
  * what lets `rebuild` and `verify` page a large source instead of holding it:
  * a rebuild only ever inserts, and non-linearity is a statement about
- * RETRACTION, not accumulation. Nothing here can retract; `applyLinearDelta`
+ * RETRACTION, not accumulation. Nothing here can retract; `applyDelta`
  * is still the only signed-delta path.
  *
  * Entry order does not affect the result. `first`/`last` carry the winning
@@ -301,66 +297,163 @@ function compareEntries(a: StoredEntry, b: StoredEntry): number {
 }
 
 // ---------------------------------------------------------------------------
-// Linear delta application (O(1) path)
+// Incremental delta application (issue #7)
 // ---------------------------------------------------------------------------
 
 /**
- * Apply a signed delta to one group's reduced row: subtract the row's old
- * contribution, add its new one. Only valid when every aggregate is linear.
- * Returns the next row; the caller deletes it when `entryCount` hits 0.
+ * Fold one row's change (retract `oldEntries`, add `newEntries`) into one
+ * group's reduced row WITHOUT reading the group's other entries, when that is
+ * provably exact. Returns the next row, or `null` when the group must be
+ * re-reduced from its entries (`reReduceInTx`). The caller deletes the row
+ * when `entryCount` reaches 0.
+ *
+ * The decision is per aggregate, not per index — one `max` among four sums no
+ * longer sends the sums through a full-group scan:
+ *
+ * - `sum` / `count` / `avg`: signed deltas, always O(1).
+ * - `min` / `max`: retraction only needs the group when the value leaving IS
+ *   the current extreme and nothing arriving reaches it. Inserts never need
+ *   the group — the extreme can only improve. So an append-only workload is
+ *   O(1) per change for good.
+ * - `first` / `last` / `distinct`: retraction always re-reduces. The reduced
+ *   row stores the edge VALUE but not its (pk, ord) position, and `distinct`
+ *   has no per-value refcounts, so neither can tell whether a retraction
+ *   moved it.
+ *
+ * A brand-new group (no reduced row, nothing retracted) is exactly the fold
+ * of the new entries, for every aggregate — the same `createGroupFold` the
+ * rebuild uses, so the paths cannot drift.
  */
-export function applyLinearDelta(
+export function applyDelta(
   aggregates: ParsedAggregate[],
   groupKey: string,
   current: ReducedRow | null,
-  oldEntries: Entry[],
-  newEntries: Entry[],
-): ReducedRow {
-  const values: Record<string, unknown> = current ? { ...current.values } : initValues(aggregates);
+  oldEntries: StoredEntry[],
+  newEntries: StoredEntry[],
+): ReducedRow | null {
+  if (current === null) {
+    // Retracting from a group that has no row means the stored state is not
+    // what we think it is — let the scan sort it out rather than guess.
+    if (oldEntries.length > 0) return null;
+    return reduceFull(aggregates, groupKey, newEntries);
+  }
+
+  const oldValues = oldEntries.map((e) => e.values);
+  const newValues = newEntries.map((e) => e.values);
+  const values: Record<string, unknown> = { ...current.values };
 
   for (const agg of aggregates) {
     switch (agg.fn) {
       case 'sum': {
         const cur = values[agg.out] as number;
-        values[agg.out] = cur + sumOf(agg, newEntries) - sumOf(agg, oldEntries);
+        values[agg.out] = cur + sumOf(agg, newValues) - sumOf(agg, oldValues);
         break;
       }
       case 'count': {
         const cur = values[agg.out] as number;
-        values[agg.out] = cur + countOf(agg, newEntries) - countOf(agg, oldEntries);
+        values[agg.out] = cur + countOf(agg, newValues) - countOf(agg, oldValues);
         break;
       }
       case 'avg': {
         const cur = values[agg.out] as { sum: number; count: number };
-        const add = avgOf(agg, newEntries);
-        const sub = avgOf(agg, oldEntries);
+        const add = avgOf(agg, newValues);
+        const sub = avgOf(agg, oldValues);
         values[agg.out] = {
           sum: cur.sum + add.sum - sub.sum,
           count: cur.count + add.count - sub.count,
         };
         break;
       }
-      default:
-        throw new RipplyError(
-          `aggregate "${agg.out}": "${agg.fn}" is non-linear and cannot take deltas`,
+      case 'min':
+      case 'max': {
+        const next = extremeDelta(
+          agg,
+          values[agg.out] as number | string | null,
+          oldValues,
+          newValues,
         );
+        if (next === RESCAN) return null;
+        values[agg.out] = next;
+        break;
+      }
+      case 'first':
+      case 'last':
+      case 'distinct':
+        // Even an insert into an existing group needs the group: an edge
+        // needs the current winner's (pk, ord) position and `distinct` needs
+        // the full value set, and neither is in the reduced row.
+        return null;
     }
   }
 
   return {
     groupKey,
-    group: current?.group ?? groupOfKey(groupKey),
+    group: current.group,
     values,
-    entryCount: (current?.entryCount ?? 0) + newEntries.length - oldEntries.length,
+    entryCount: current.entryCount + newEntries.length - oldEntries.length,
   };
 }
 
-function initValues(aggregates: ParsedAggregate[]): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
-  for (const agg of aggregates) {
-    values[agg.out] = agg.fn === 'avg' ? { sum: 0, count: 0 } : 0;
+/** Sentinel: this min/max cannot be maintained from the reduced row alone. */
+const RESCAN = Symbol('rescan');
+
+/**
+ * Next min/max after retracting `oldValues` and adding `newValues`, or
+ * `RESCAN` when the answer depends on entries we have not read.
+ *
+ * With `best` the current extreme (for `max`; `min` mirrors it):
+ *   - a retracted value strictly below `best` cannot have been the extreme;
+ *   - a retracted value equal to `best` might have been the only one — the
+ *     runner-up is unknown — UNLESS a new value reaches `best` too, in which
+ *     case the result is the new extreme regardless of the runner-up;
+ *   - anything else (a retraction from an all-null group, a value beyond
+ *     `best`, a type that can't compare) means the stored row disagrees with
+ *     the entries, and only a scan is safe.
+ */
+function extremeDelta(
+  agg: ParsedAggregate,
+  best: number | string | null,
+  oldValues: Entry[],
+  newValues: Entry[],
+): number | string | null | typeof RESCAN {
+  const isMax = agg.fn === 'max';
+  const beats = (a: number | string, b: number | string): boolean => (isMax ? a > b : a < b);
+
+  // Fold the arrivals first; the retraction test needs to know how far they reach.
+  let incoming: number | string | null = null;
+  for (const entry of newValues) {
+    const value = comparable(agg, entry[agg.field!]);
+    if (value === null) continue;
+    if (incoming !== null && typeof value !== typeof incoming) {
+      throw new RipplyError(
+        `aggregate "${agg.out}": cannot compare ${typeof incoming} with ${typeof value}`,
+      );
+    }
+    if (incoming === null || beats(value, incoming)) incoming = value;
   }
-  return values;
+
+  let extremeLeaving = false;
+  for (const entry of oldValues) {
+    const value = comparable(agg, entry[agg.field!]);
+    if (value === null) continue;
+    if (best === null || typeof value !== typeof best) return RESCAN;
+    if (beats(value, best)) return RESCAN;
+    if (value === best) extremeLeaving = true;
+  }
+
+  // A new type against the stored extreme: the old type may be leaving
+  // entirely (a legal transition), or the group is genuinely mixed (an
+  // error). Only the scan can tell, and it raises the error if there is one.
+  if (best !== null && incoming !== null && typeof incoming !== typeof best) return RESCAN;
+
+  if (extremeLeaving) {
+    // `best` left. Only a new value at least as extreme pins the answer.
+    if (incoming === null || beats(best!, incoming)) return RESCAN;
+    return incoming;
+  }
+  if (best === null) return incoming;
+  if (incoming === null) return best;
+  return beats(incoming, best) ? incoming : best;
 }
 
 // ---------------------------------------------------------------------------
