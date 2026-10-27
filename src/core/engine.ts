@@ -40,6 +40,11 @@ export interface IndexRuntime {
   name: string;
   def: IndexDefinition;
   aggregates: ParsedAggregate[];
+  /**
+   * True when an aggregate (`first`/`last`/`distinct`) always needs the group,
+   * so reading the reduced row first would be wasted work.
+   */
+  alwaysReReduce: boolean;
   /** Hash of collection + map source + reduce spec (invariant 10). */
   version: string;
 }
@@ -112,6 +117,9 @@ export class Engine {
       name,
       def,
       aggregates,
+      alwaysReReduce: aggregates.some(
+        ({ fn }) => fn === 'first' || fn === 'last' || fn === 'distinct',
+      ),
       version: mapVersionOf(def),
     });
   }
@@ -293,6 +301,11 @@ export class Engine {
     const affectedGroups = new Set<string>(
       [...oldEntries, ...newEntries].map((entry) => entry.groupKey),
     );
+
+    if (runtime.alwaysReReduce) {
+      for (const groupKey of affectedGroups) dirtyGroups.add(groupKey);
+      return;
+    }
 
     for (const groupKey of affectedGroups) {
       // Already queued for a re-reduce this batch: its reduced row is stale,

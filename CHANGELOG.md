@@ -14,9 +14,14 @@ A change no longer re-reads the whole group just because the index has a
   retracting the extreme when a new value reaches it. Only when the current
   extreme leaves with nothing to replace it is the group re-read.
 - A brand-new group is folded from its own entries for every aggregate.
-- `first`/`last`/`distinct` on an existing group re-reduce, as before.
+- An index with any `first`/`last`/`distinct` re-reduces affected groups, as
+  before.
 
-Results are identical; only the work changes. On local Postgres, 500 inserts
+Results are the same, with one tolerance: in an index that mixes `min`/`max`
+with float-valued `sum`/`avg`, those sums now accumulate by signed delta (as
+all-linear indexes always have), so they can differ from a from-scratch reduce
+in the last bits, and `verify()`, which compares exactly, can flag them.
+Integer sums are exact. On local Postgres, 500 inserts
 into a 200,000-entry group with a `max` went from 242 ms to 2.9 ms per drain
 and from ~98M entry rows fetched to **zero**.
 

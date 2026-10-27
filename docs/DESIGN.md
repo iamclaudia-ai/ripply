@@ -295,10 +295,12 @@ group per game turn. So the decision is made per change and per aggregate
 |---|---|---|
 | `sum` / `count` / `avg` | always | never |
 | `min` / `max` | inserts; retracting a value strictly inside the extreme; retracting the extreme when a new value reaches it | the extreme leaves and nothing arriving reaches it (or the row disagrees with the entries) |
-| `first` / `last` / `distinct` | a brand-new group | any other change (the row holds no edge position or value set) |
+| `first` / `last` / `distinct` | never | every change (the row holds no edge position or value set), so an index containing one re-reduces every touched group without reading its row first |
 
 Linear aggregates beside a `max` keep their deltas: one `max` no longer turns
-four sums into a scan. An append-only workload over `min`/`max` + linear
+four sums into a scan. The trade is float precision: those sums now accumulate
+by signed delta, as all-linear indexes always have, so a float `sum`/`avg` can
+differ from a from-scratch reduce in its last bits. An append-only workload over `min`/`max` + linear
 aggregates never reads a group at all. Retaining a top-K runner-up list per
 extreme would make retraction O(1) too — deferred until a workload needs it.
 
