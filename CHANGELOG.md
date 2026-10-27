@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.0
+
+### Incremental `min`/`max` (#7)
+
+A change no longer re-reads the whole group just because the index has a
+`min` or `max`. The engine now decides per change and per aggregate
+(`applyDelta`):
+
+- `sum`/`count`/`avg` keep their O(1) signed deltas even beside a `max` —
+  previously one non-linear aggregate made the entire index re-reduce.
+- `min`/`max` are O(1) on insert, on retracting a non-extreme value, and on
+  retracting the extreme when a new value reaches it. Only when the current
+  extreme leaves with nothing to replace it is the group re-read.
+- A brand-new group is folded from its own entries for every aggregate.
+- `first`/`last`/`distinct` on an existing group re-reduce, as before.
+
+Results are identical; only the work changes. On local Postgres, 500 inserts
+into a 200,000-entry group with a `max` went from 242 ms to 2.9 ms per drain
+and from ~98M entry rows fetched to **zero**.
+
+**Breaking:** `isLinear` is no longer exported, and `IndexRuntime.linear` is
+gone. Nothing branches on index-wide linearity any more.
+
 ## 0.1.0
 
 ### Streaming rebuild (#3)
