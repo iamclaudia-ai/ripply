@@ -4,7 +4,8 @@
  * The reconcile-from-stored-entries loop (DESIGN.md §1):
  *
  *   poll → map → readEntries (the row's CURRENT contribution, from our own
- *   entries table) → per-group linear delta / dirty-mark → replaceEntries →
+ *   entries table) → replaceEntries → per-group delta (or dirty-mark when the
+ *   reduced row alone can't answer) →
  *   re-reduce dirty groups → delete empty groups → setCursor
  *
  * …all inside ONE Store transaction. Cursor advance and index writes commit
@@ -14,8 +15,7 @@
  */
 
 import {
-  applyLinearDelta,
-  isLinear,
+  applyDelta,
   normalizeMapOutput,
   parseReduceSpec,
   reduceFull,
@@ -40,8 +40,6 @@ export interface IndexRuntime {
   name: string;
   def: IndexDefinition;
   aggregates: ParsedAggregate[];
-  /** True when every aggregate accepts signed deltas (O(1) path). */
-  linear: boolean;
   /** Hash of collection + map source + reduce spec (invariant 10). */
   version: string;
 }
@@ -114,7 +112,6 @@ export class Engine {
       name,
       def,
       aggregates,
-      linear: isLinear(aggregates),
       version: mapVersionOf(def),
     });
   }
@@ -221,7 +218,8 @@ export class Engine {
       for (const change of batch.changes) {
         await this.applyChangeInTx(runtime, change, tx, dirtyGroups);
       }
-      // non-linear groups re-reduce once per batch, from entries only
+      // groups the reduced row couldn't answer re-reduce once per batch,
+      // from that group's entries only
       for (const groupKey of dirtyGroups) {
         await this.reReduceInTx(runtime, groupKey, tx);
       }
@@ -296,20 +294,24 @@ export class Engine {
       [...oldEntries, ...newEntries].map((entry) => entry.groupKey),
     );
 
-    if (!runtime.linear) {
-      for (const groupKey of affectedGroups) dirtyGroups.add(groupKey);
-      return;
-    }
-
-    // All-linear index: apply signed deltas, O(1) per group.
     for (const groupKey of affectedGroups) {
-      const next = applyLinearDelta(
+      // Already queued for a re-reduce this batch: its reduced row is stale,
+      // and the re-reduce reads the post-replace entries anyway.
+      if (dirtyGroups.has(groupKey)) continue;
+
+      // O(1) whenever the reduced row alone determines the answer — always for
+      // sum/count/avg, and for min/max unless the current extreme is leaving.
+      const next = applyDelta(
         runtime.aggregates,
         groupKey,
         await tx.getReduced(runtime.name, groupKey),
-        oldEntries.filter((e) => e.groupKey === groupKey).map((e) => e.values),
-        newEntries.filter((e) => e.groupKey === groupKey).map((e) => e.values),
+        oldEntries.filter((e) => e.groupKey === groupKey),
+        newEntries.filter((e) => e.groupKey === groupKey),
       );
+      if (next === null) {
+        dirtyGroups.add(groupKey);
+        continue;
+      }
       if (next.entryCount <= 0) {
         // decrement-to-zero DELETES the row — no ghost groups (invariant 4)
         await tx.deleteReduced(runtime.name, groupKey);

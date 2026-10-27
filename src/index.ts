@@ -10,7 +10,7 @@
 export * from './core/types';
 export { RipplyError } from './core/errors';
 export { canonicalJson, groupKeyOf, groupOfKey, pkKeyOf, tallyTableOf } from './core/canonical';
-export { parseReduceSpec, isLinear, type ParsedAggregate } from './core/aggregates';
+export { parseReduceSpec, type ParsedAggregate } from './core/aggregates';
 export { fnv1aHex, mapVersionOf } from './core/version';
 export { Engine, createEngine, type CreateEngineOptions, type IndexRuntime } from './core/engine';
 export type { RebuildOptions, VerifyResult } from './core/rebuild';

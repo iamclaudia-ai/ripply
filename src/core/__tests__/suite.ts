@@ -101,6 +101,36 @@ export const INDEXES: Record<string, IndexDefinition> = {
       },
     },
   },
+  // min/max beside linear aggregates and NOTHING else — the shape of a
+  // leaderboard, and the one that takes the O(1) extreme path (issue #7).
+  // `tier` has five values over many rows, so ties at the extreme are
+  // common: retracting one of two equal maxima is the case most likely to
+  // be gotten wrong.
+  extremesByTech: {
+    collection: 'work_orders',
+    map: (wo) => ({
+      techId: wo.technician_id,
+      revenue: wo.revenue,
+      tier: typeof wo.revenue === 'number' ? wo.revenue % 5 : null,
+      status: wo.status,
+      n: 1,
+    }),
+    reduce: {
+      groupBy: ['techId'],
+      aggregate: {
+        jobs: { sum: 'n' },
+        total: { sum: 'revenue' },
+        avgRevenue: { avg: 'revenue' },
+        lo: { min: 'revenue' },
+        hi: { max: 'revenue' },
+        loTier: { min: 'tier' },
+        hiTier: { max: 'tier' },
+        topStatus: { max: 'status' },
+      },
+    },
+    // SQL tally columns type min/max as numbers unless told otherwise
+    columnTypes: { topStatus: 'text' },
+  },
   // multi-emit (one entry per tag; duplicate tags allowed on purpose)
   byTag: {
     collection: 'work_orders',
@@ -128,6 +158,36 @@ async function reducedState(store: Store, name: string) {
   return Object.fromEntries(
     rows.map((r) => [r.groupKey, { values: r.values, entryCount: r.entryCount }]),
   );
+}
+
+/**
+ * Wrap a store so its transactions count `readGroupEntries` calls — the
+ * full-group read that issue #7 exists to avoid.
+ */
+function countGroupScans(store: Store): { store: Store; count: () => number } {
+  let scans = 0;
+  const countingTx = (tx: StoreTx): StoreTx =>
+    new Proxy(tx, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target) as unknown;
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          if (prop === 'readGroupEntries') scans++;
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    });
+  const counted = new Proxy(store, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target) as unknown;
+      if (prop === 'transaction') {
+        return <T>(fn: (tx: StoreTx) => Promise<T>) =>
+          target.transaction((tx) => fn(countingTx(tx)));
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return { store: counted, count: () => scans };
 }
 
 async function expectMatchesOracle(backend: SuiteBackend, defs: Record<string, IndexDefinition>) {
@@ -344,6 +404,61 @@ export function runInvariantSuite(backendName: string, createBackend: SuiteBacke
       await engine.drain();
       state = await reducedState(backend.store, 'statsByStatus');
       expect(state[key]!.values).toMatchObject({ lo: 5, hi: 5, total: 5, techs: ['t2'] });
+    });
+
+    test('min/max beside linear aggregates read the group only when the extreme leaves', async () => {
+      // A leaderboard: sums plus a high score. Issue #7 — this shape used to
+      // re-read the whole group on every change, which on a 115 MB group is
+      // the entire cost of the index.
+      const defs: Record<string, IndexDefinition> = {
+        board: {
+          collection: 'work_orders',
+          map: (wo) => ({ techId: wo.technician_id, score: wo.revenue, n: 1 }),
+          reduce: {
+            groupBy: ['techId'],
+            aggregate: {
+              games: { sum: 'n' },
+              points: { sum: 'score' },
+              avgScore: { avg: 'score' },
+              lo: { min: 'score' },
+              hi: { max: 'score' },
+            },
+          },
+        },
+      };
+      const backend = createBackend();
+      const scans = countGroupScans(backend.store);
+      const engine = createEngine({ source: backend.source, store: scans.store, batchSize: 2 });
+      for (const [name, def] of Object.entries(defs)) engine.defineIndex(name, def);
+
+      const row = (id: string, score: number) => ({ id, technician_id: 't1', revenue: score });
+      await backend.insert(row('a', 10));
+      await backend.insert(row('b', 50));
+      await backend.insert(row('c', 30));
+      await backend.insert({ id: 'd', technician_id: 't2', revenue: 5 });
+      await engine.drain();
+      // neither extreme moves: 30 → 40 sits strictly inside [10, 50]
+      await backend.update(row('c', 40));
+      await engine.drain();
+      // the max leaves, but its replacement reaches it: 50 → 60 is still the max
+      await backend.update(row('b', 60));
+      await engine.drain();
+      // a non-extreme leaves outright
+      await backend.remove('c');
+      await engine.drain();
+
+      expect(scans.count()).toBe(0);
+      await expectMatchesOracle(backend, defs);
+
+      // The slow path must not rot now that the fast path covers the common
+      // case: retract the current max with nothing to replace it.
+      await backend.remove('b');
+      await engine.drain();
+      expect(scans.count()).toBeGreaterThan(0);
+      await expectMatchesOracle(backend, defs);
+      expect((await reducedState(backend.store, 'board'))['{"techId":"t1"}']!.values).toMatchObject(
+        { games: 1, points: 10, lo: 10, hi: 10 },
+      );
     });
 
     test('invariant 6 — a map emitting fewer entries retracts exactly the difference', async () => {
