@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+Maintenance release with no runtime changes. The library source is identical
+to 0.2.0.
+
+- Dev tooling: `@types/bun` 1.3.14 → 1.4.4, `oxlint` 1.89.0 → 1.90.0,
+  `oxfmt` 0.74.0 → 0.75.0 (#17, #18).
+
 ## 0.2.0
 
 ### Incremental `min`/`max` (#7)
