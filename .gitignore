@@ -6,3 +6,6 @@ dist/
 .DS_Store
 .env
 .env.*
+
+# Working files (scripts, drafts, screenshots) that survive a reboot, unlike /tmp
+tmp/
