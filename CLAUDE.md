@@ -86,6 +86,11 @@ transaction. The index reads empty/partial while a rebuild runs — see
 - Strict TypeScript. Core (`src/core/`) must have zero dependencies and zero
   knowledge of any database.
 - Conventional commits. Commit locally and often. Never push without asking.
+- **Releases publish from CI**, never from a laptop: bump `version`, add a
+  CHANGELOG entry, merge, then push a `vX.Y.Z` tag. `.github/workflows/release.yml`
+  verifies (full suite against a Postgres service) and publishes with npm
+  trusted publishing (OIDC, provenance, no token). Re-publish an existing tag
+  with `gh workflow run release.yml -f tag=vX.Y.Z`.
 - Tests live next to what they test (`src/core/__tests__/`). Property/invariant
   tests are the spec — when design and test disagree, stop and discuss.
 
